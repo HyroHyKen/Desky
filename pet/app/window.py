@@ -38,6 +38,7 @@ from PySide6.QtWidgets import QWidget
 from ..anim.curiosity import CuriousGaze
 from ..anim.easing import Spring
 from ..anim.impact import Impact
+from ..anim.particles import Particles
 from ..anim.layers import AnimContext, Animator
 from ..anim.locomotion import Locomotion, Terrain
 from ..brain.session import Session
@@ -49,6 +50,7 @@ from ..render.context import RenderContext
 from ..render.glyphs import GLYPH_FOR_NEED
 from ..render.scene import Scene
 from ..ui.item import ItemWindow, SpritePicker
+from ..ui import sparks
 from ..ui.panel import CarePanel
 from ..state.save import Store
 from . import win32
@@ -113,6 +115,11 @@ SYSTEM_CHECK_MS = 250
 
 # Sauvegarde périodique (CDC §14).
 AUTOSAVE_MS = 60_000
+
+# Intervalle entre deux « Z » de sommeil (lot L11). Long : un robot qui dort ne
+# doit surtout pas attirer l'attention, et une lettre toutes les deux secondes
+# suffit à dire qu'il dort sans le rendre bavard.
+SLEEP_Z_PERIOD = 2.3
 
 # Chute vers le sol. Une parabole plutôt qu'une interpolation linéaire, avec un
 # rebond amorti : le CDC §10 interdit toute interpolation linéaire sur un
@@ -240,6 +247,14 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         # donc trois fois plus lentement en temps réel à 10 fps qu'à 30 : le pet
         # réagissait au clic d'autant plus mollement qu'il était occupé.
         self._impact = Impact()
+
+        # Particules (lot L11). Peintes par-dessus l'image rendue, jamais
+        # dedans : le hit-testing lit l'alpha du FBO, et une étincelle qui y
+        # figurerait deviendrait cliquable. Voir `ui/sparks`.
+        self._particles = Particles(seed=int(genome.get("seed", 0)) ^ 0xD057)
+        self._sleep_t = 0.0
+        self._abonnements: list[tuple[str, object]] = []
+        self._subscribe_effects()
         self._t0 = time.perf_counter()
         self._t_last = self._t0
 
@@ -587,6 +602,7 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         t = now - self._t0
 
         self._impact.step(dt)
+        self._step_particles(dt)
         self._step_fall(dt, ph)
         self._look_point = self._look_target(dt, pw)
         self._step_intro(dt)
@@ -655,6 +671,11 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         painter = QPainter(self)
         # Source déjà prémultipliée : la composition par défaut est la bonne.
         painter.drawImage(0, 0, self._qimage)
+        # Les particules **par-dessus**, et seulement ici : dessinées dans la
+        # scène GL, elles entreraient dans l'alpha que lit le hit-testing et
+        # deviendraient cliquables (§6).
+        if not self._particles.empty:
+            sparks.draw(painter, self._particles)
         painter.end()
         self._t_paint += time.perf_counter() - _t_enter
         self._paints += 1
@@ -749,6 +770,74 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
             self._y = loco.window_y
             self._apply_position()
 
+    # -- particules (lot L11) -------------------------------------------------
+
+    def _subscribe_effects(self) -> None:
+        """Branche les gerbes sur les faits du bus.
+
+        Un abonnement plutôt qu'un appel direct depuis `_step_fall` : ajouter
+        un effet à un fait existant ne demande alors de toucher ni la chute, ni
+        le soin, ni l'achat. C'est précisément ce pour quoi le bus a été posé au
+        lot L9, et c'est le lot Sons qui en profitera ensuite sans rien modifier
+        de ce fichier.
+
+        Les abonnements sont **mémorisés** pour être retirés à la fermeture : le
+        bus est un objet de service qui survit à la fenêtre, et une fenêtre
+        détruite qui continue d'y répondre peindrait dans un widget mort — un
+        défaut qui ne se manifeste qu'en test, là où l'on crée des dizaines de
+        fenêtres, mais qui s'y manifeste à coup sûr.
+        """
+        for nom, fonction in (("atterri", self._on_landed),
+                              ("soin_accepte", self._on_care_sparks),
+                              ("achat_refuse", self._on_refusal)):
+            bus.subscribe(nom, fonction)
+            self._abonnements.append((nom, fonction))
+
+    def _unsubscribe_effects(self) -> None:
+        for nom, fonction in self._abonnements:
+            bus.unsubscribe(nom, fonction)
+        self._abonnements.clear()
+
+    def _logical(self) -> tuple[float, float]:
+        """Taille du widget en pixels **logiques** — le repère de `QPainter`.
+
+        Les particules vivent dans ce repère et non dans celui du rendu : elles
+        sont peintes par `paintEvent`, qui travaille en logique. Confondre les
+        deux donne des gerbes deux fois trop grandes sur un écran à 200 %.
+        """
+        return float(self.width()), float(self.height())
+
+    def _on_landed(self, force: float, vitesse: float) -> None:
+        w, h = self._logical()
+        sparks.landing_dust(self._particles, force, w, h)
+
+    def _on_care_sparks(self, soin: str) -> None:
+        w, h = self._logical()
+        sparks.care_sparks(self._particles, w, h)
+
+    def _on_refusal(self, emplacement: str, cle: str, raison: str) -> None:
+        w, h = self._logical()
+        sparks.refusal_puff(self._particles, w, h)
+
+    def _step_particles(self, dt: float) -> None:
+        """Avance le banc, et laisse tomber un « Z » quand le pet dort.
+
+        Le sommeil est le seul effet **continu** du lot : il n'a pas de fait
+        déclencheur, c'est un état. D'où l'émission au compte-gouttes ici plutôt
+        qu'un abonnement — et un intervalle long, parce qu'un robot qui dort ne
+        doit surtout pas attirer l'attention.
+        """
+        _, h = self._logical()
+        self._particles.step(dt, h)
+
+        if self._plan.action == "nap" and not self._dragging:
+            self._sleep_t += dt
+            if self._sleep_t >= SLEEP_Z_PERIOD:
+                self._sleep_t = 0.0
+                sparks.sleep_z(self._particles, *self._logical())
+        else:
+            self._sleep_t = SLEEP_Z_PERIOD * 0.6
+
     # -- cadence (correctif d'après-lot L6) ----------------------------------
 
     def _wants_frames(self) -> bool:
@@ -809,6 +898,8 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         # jouerait à 10 fps, c'est-à-dire par paliers, juste après la chute qui,
         # elle, tournait à 30.
         if not self._impact.settled:
+            return True
+        if not self._particles.empty:
             return True
         return False
 
@@ -982,6 +1073,7 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         self.clock.poke()
 
     def shutdown(self) -> None:
+        self._unsubscribe_effects()
         self._close_item()
         if self.panel is not None:
             self.panel.close()

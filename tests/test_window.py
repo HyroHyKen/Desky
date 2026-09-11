@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from pet.app import win32
 from pet.app.clock import Regime, RenderClock
 from pet.anim.impact import Impact
+from pet.anim.particles import Particles
 from pet.app.window import (PetWindow, choose_monitor, floor_y,
                             frac_to_position, position_to_frac)
 
@@ -497,6 +498,7 @@ class FrameDemandTest(unittest.TestCase):
         # Un encaissement en cours déforme le corps sans déplacer la fenêtre :
         # le prédicat le lit, donc le montage doit le fournir (lot L10).
         w._impact = Impact()
+        w._particles = Particles()
         for cle, valeur in kwargs.items():
             setattr(w, cle, valeur)
         return w

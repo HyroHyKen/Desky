@@ -21,6 +21,7 @@ from ...anim.layers import Animator
 from ...geometry.builder import build
 from ...ui.item import ITEM_KINDS
 from ...ui.panel import CarePanel
+from ...feedback import bus
 from .. import win32
 
 # Jeu entre le haut du pet et le bas du panneau, en pixels logiques.
@@ -120,6 +121,10 @@ class CareMixin:
         if self.animator is not None:
             self.animator.play("celebrate")
         besoin = max(applied, key=lambda k: abs(applied[k]))
+        # Le fait est annoncé **à la livraison**, au même endroit que le token :
+        # c'est là que le soin a réellement eu lieu. L'annoncer au clic ferait
+        # partir la gerbe pour une gamelle qui n'a pas encore été rejointe.
+        bus.emit("soin_accepte", soin=kind)
         self.show_in_eyes(besoin, besoin, seconds=1.6)
         self.clock.poke()
         if self.panel is not None:
@@ -156,7 +161,10 @@ class CareMixin:
 
         if key != NONE and not self.session.owns(key):
             if not self.session.buy(key):
+                bus.emit("achat_refuse", emplacement=slot, cle=key,
+                         raison="fonds")
                 return
+            bus.emit("article_achete", emplacement=slot, cle=key)
             if self.diag:
                 print(f"[diag] achat {key} -> solde {self.session.tokens}",
                       flush=True)
@@ -184,8 +192,6 @@ class CareMixin:
         session qui porte encore l'ancien en mémoire serait une source de bugs
         pour un geste qui arrive une fois dans la vie du produit.
         """
-        from ...state import save
-
         if self.panel is not None:
             # Sans animation : la session que le panneau peint est sur le point
             # d'être effacée, et le regarder se fermer joliment en lisant des

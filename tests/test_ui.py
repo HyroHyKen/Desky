@@ -1577,6 +1577,133 @@ class LandingTest(unittest.TestCase):
             w.shutdown()
 
 
+class ParticleHitTestTest(unittest.TestCase):
+    """Les particules ne doivent pas rendre la fenêtre cliquable (CDC §6).
+
+    C'est la contrainte qui a décidé de toute l'architecture du lot L11. Le
+    hit-testing lit l'alpha de l'image **rendue** : une étincelle dessinée dans
+    le FBO deviendrait une surface d'interception, et les clics destinés à la
+    fenêtre du dessous seraient avalés par de la poussière. D'où la peinture par
+    `QPainter` par-dessus la QImage, qui ne touche jamais cet alpha.
+
+    Le défaut serait invisible en regardant l'écran et très pénible à
+    diagnostiquer : « parfois mes clics ne passent pas ».
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    setUp = BubblePopTest.setUp
+    tearDown = BubblePopTest.tearDown
+    _window = BubblePopTest._window
+
+    def _peint(self, w):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
+
+        image = QImage(w.width(), w.height(),
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        w.render(image)
+        return image
+
+    def test_une_gerbe_n_agrandit_pas_la_zone_cliquable(self) -> None:
+        import numpy as np
+        from pet.ui import sparks
+
+        w = self._window()
+        try:
+            w._on_render()
+            avant_bbox = w._bbox
+            avant_alpha = w._alpha.copy()
+
+            sparks.care_sparks(w._particles, w.width(), w.height())
+            sparks.landing_dust(w._particles, 1.0, w.width(), w.height())
+            self.assertGreater(w._particles.count, 10, "aucune particule émise")
+
+            # **Pas de second `_on_render` entre les deux mesures.** Le robot
+            # respire et cligne : un nouveau rendu changerait l'alpha pour des
+            # raisons qui n'ont rien à voir avec les particules, et le test
+            # échouerait en accusant le mauvais coupable.
+            self._peint(w)                      # déclenche paintEvent
+
+            self.assertEqual(w._bbox, avant_bbox,
+                             "la zone d'approche a enflé avec les particules")
+            self.assertTrue(np.array_equal(w._alpha, avant_alpha),
+                            "les particules sont entrées dans l'alpha du rendu")
+
+            # La conséquence, dite dans les termes de l'utilisateur : là où il
+            # n'y a qu'une particule, le clic doit continuer de passer.
+            idx, _ = w._particles.visible()
+            dpr = w._pet_rect()[2] / max(1, w.width())
+            dehors = 0
+            for k in idx:
+                px = int(w._particles.x[k] * dpr)
+                py = int(w._particles.y[k] * dpr)
+                if not (0 <= px < w._alpha.shape[1] and 0 <= py < w._alpha.shape[0]):
+                    continue
+                if w._alpha[py, px] == 0:
+                    dehors += 1
+            self.assertGreater(dehors, 0,
+                               "aucune particule hors silhouette : test aveugle")
+        finally:
+            w.shutdown()
+
+    def test_elles_sont_bien_peintes_pour_autant(self) -> None:
+        """Le pendant du test précédent : ne pas toucher l'alpha ne doit pas
+        vouloir dire ne rien dessiner."""
+        from pet.ui import sparks
+
+        w = self._window()
+        try:
+            w._on_render()
+            nu = self._peint(w)
+            sparks.care_sparks(w._particles, w.width(), w.height())
+            avec = self._peint(w)
+            self.assertNotEqual(nu, avec, "les particules ne se voient pas")
+        finally:
+            w.shutdown()
+
+
+class ParticleLifecycleTest(unittest.TestCase):
+    """Abonnements au bus : une fenêtre fermée ne doit plus y répondre."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    setUp = BubblePopTest.setUp
+    tearDown = BubblePopTest.tearDown
+    _window = BubblePopTest._window
+
+    def test_un_atterrissage_souleve_de_la_poussiere(self) -> None:
+        from pet.feedback import bus
+
+        w = self._window()
+        try:
+            w._particles.clear()
+            bus.emit("atterri", force=0.9, vitesse=1100.0)
+            self.assertGreater(w._particles.count, 0,
+                               "le fait n'atteint pas les particules")
+        finally:
+            w.shutdown()
+
+    def test_une_fenetre_fermee_se_desabonne(self) -> None:
+        """Le bus est un objet de service qui survit à la fenêtre. Une fenêtre
+        détruite qui continue d'y répondre peindrait dans un widget mort — ce
+        qui n'arrive qu'en test, là où l'on crée des dizaines de fenêtres, mais
+        y arrive à coup sûr.
+        """
+        from pet.feedback import bus
+
+        w = self._window()
+        w.shutdown()
+        # Ne doit ni lever, ni toucher au banc de la fenêtre morte.
+        bus.emit("atterri", force=1.0, vitesse=1400.0)
+        self.assertTrue(w._particles.empty)
+
+
 class IntroSequenceTest(unittest.TestCase):
     """La scène d'arrivée : il sort, se repère, vous voit, puis demande.
 
