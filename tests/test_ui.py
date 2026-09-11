@@ -29,6 +29,29 @@ PET_ROOT = Path(__file__).resolve().parents[1] / "pet"
 SHADER_DIR = PET_ROOT / "render" / "shaders"
 
 
+def _settle(anime, dt: float = 1.0 / 60.0, limite: float = 5.0) -> int:
+    """Fait défiler une animation jusqu'à l'arrêt. Rend le nombre de pas.
+
+    Pas de timer, pas d'horloge réelle : c'est le même parti pris que
+    `IntroSequenceTest._play`, et pour la même raison — une boucle serrée sur
+    `perf_counter` ferait défiler mille images pour une seconde d'animation et
+    mesurerait des durées fausses.
+
+    La limite n'est pas une précaution de style : une animation qui ne s'arrête
+    jamais est précisément le défaut que le lot L9 doit empêcher — le tic qui
+    tourne en fond et mange le budget CPU du §3. Ici elle fait échouer le test
+    au lieu de le suspendre.
+    """
+    pas = 0
+    maximum = int(limite / dt)
+    while anime.step(dt):
+        pas += 1
+        if pas > maximum:
+            raise AssertionError(
+                "l'animation ne s'arrête pas : %.1f s simulées sans repos" % limite)
+    return pas
+
+
 # ---------------------------------------------------------------------------
 # Le contrat des sigles
 # ---------------------------------------------------------------------------
@@ -267,8 +290,15 @@ class PanelTest(unittest.TestCase):
         panel.open_page("status")
         panel._activate("back")
         self.assertEqual(panel.page, "menu")
-        panel.show()
+
+        panel.open_panel()
         panel._activate("back")
+        # Depuis le lot L9 la fermeture est animée : le panneau reste visible
+        # le temps de s'en aller. C'est le pas de temps qui le fait
+        # disparaître, pas l'appel — et c'est bien la disparition qu'on teste,
+        # pas la vitesse à laquelle elle se produit.
+        self.assertTrue(panel.closing)
+        _settle(panel)
         self.assertFalse(panel.isVisible())
 
     def test_la_page_de_statut_montre_les_quatre_besoins(self) -> None:
@@ -585,6 +615,289 @@ class PanelTest(unittest.TestCase):
         for _ in range(int(HOLD_SECONDS * 1000 / 30) + 4):
             panel._hold_tick()
         self.assertEqual(recus, [True], "l'appui maintenu n'a rien déclenché")
+
+
+# ---------------------------------------------------------------------------
+# Animation du panneau (lot L9)
+# ---------------------------------------------------------------------------
+#
+# Deux exigences opposées se rencontrent ici : le §10 veut du mouvement partout,
+# le §3 veut moins de 4 % d'un cœur. Chaque test appartient à l'une ou à
+# l'autre, et ceux qui vérifient l'arrêt comptent autant que ceux qui vérifient
+# le mouvement.
+
+
+class PanelMotionTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    def _panel(self):
+        from pet.brain.brain import Brain
+        from pet.brain.needs import Needs
+        from pet.ui.panel import CarePanel
+
+        panel = CarePanel(_FauxSession(Brain(Needs()), "Boulon"))
+        self.addCleanup(panel.close)
+        return panel
+
+    # -- ça bouge ----------------------------------------------------------
+
+    def test_l_ouverture_n_est_pas_instantanee(self) -> None:
+        """Le critère du lot, dans sa forme la plus nue."""
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        self.assertTrue(panel.isVisible())
+        self.assertLess(panel._ouverture.value, 1.0,
+                        "le panneau est déjà à sa taille : il a sauté")
+        _settle(panel)
+        self.assertAlmostEqual(panel._ouverture.value, 1.0, places=6)
+
+    def test_l_ouverture_depasse_sa_taille_avant_de_se_poser(self) -> None:
+        """Le dépassement du §10, sur la valeur réellement peinte.
+
+        C'est la propriété la plus fragile de tout le lot : borner l'ouverture
+        à [0, 1] dans `paintEvent` supprimerait l'effet sans casser un seul
+        autre test, et la différence ne se voit qu'au ralenti.
+        """
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        maximum = 0.0
+        while panel.step(1.0 / 120.0):
+            maximum = max(maximum, panel._ouverture.value)
+        self.assertGreater(maximum, 1.02, "l'ouverture ne dépasse pas")
+
+    def _bouton_sans_navigation(self, panel):
+        """Un bouton qui reste à l'écran une fois pressé.
+
+        La distinction n'est pas un détail de test : le panneau active **à
+        l'appui**, donc presser un bouton de navigation remplace la page, et
+        avec elle le bouton pressé. Sa réponse d'appui n'a alors nulle part où
+        se jouer — c'est la transition de page qui fait office de retour. Seuls
+        les boutons qui restent peuvent s'enfoncer et rebondir.
+        """
+        panel.open_page("interactions")
+        for bouton in panel._layout().buttons:
+            if bouton.enabled and bouton.action not in ("back",):
+                return bouton
+        self.skipTest("aucun soin disponible sur cette page")
+
+    def test_l_appui_enfonce_le_bouton(self) -> None:
+        panel = self._panel()
+        panel.open_panel()
+        bouton = self._bouton_sans_navigation(panel)
+        _settle(panel)
+
+        panel.mousePressEvent(_FauxClic(bouton.rect.center()))
+        for _ in range(6):
+            panel.step(1.0 / 60.0)
+        self.assertLess(panel._echelle_bouton(bouton.action), 1.0,
+                        "l'appui ne s'enfonce pas")
+
+    def test_le_relachement_repasse_au_dessus(self) -> None:
+        """C'est là que se joue la sensation de rebond, pas à l'appui."""
+        panel = self._panel()
+        panel.open_panel()
+        bouton = self._bouton_sans_navigation(panel)
+        _settle(panel)
+
+        panel.mousePressEvent(_FauxClic(bouton.rect.center()))
+        for _ in range(10):
+            panel.step(1.0 / 60.0)
+        panel.mouseReleaseEvent(_FauxClic(bouton.rect.center()))
+
+        maximum = 0.0
+        while panel.step(1.0 / 120.0):
+            maximum = max(maximum, panel._echelle_bouton(bouton.action))
+        self.assertGreater(maximum, 1.0,
+                           "le bouton revient sans dépasser : pas de rebond")
+
+    def test_un_bouton_de_navigation_laisse_la_page_faire_le_retour(self) -> None:
+        """Décision de conception, épinglée ici pour qu'on ne la « corrige »
+        pas plus tard : activer à l'appui fait disparaître le bouton pressé,
+        et sa réponse avec lui. Ce qui doit rester vrai, c'est qu'il ne reste
+        **rien en vol** derrière lui."""
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+
+        bouton = panel._layout().buttons[0]
+        panel.mousePressEvent(_FauxClic(bouton.rect.center()))
+        self.assertNotEqual(panel.page, "menu", "ce bouton ne navigue pas")
+        self.assertNotIn(bouton.action, panel._appui._ressorts)
+        _settle(panel)
+
+    def test_rouvrir_pendant_la_fermeture_rattrape_en_vol(self) -> None:
+        """Un second clic droit pendant la fermeture ne doit pas faire
+        disparaître le panneau pour le refaire naître."""
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+
+        panel.close_panel()
+        for _ in range(3):
+            panel.step(1.0 / 60.0)
+        mi_chemin = panel._ouverture.value
+        self.assertLess(mi_chemin, 1.0)
+
+        panel.open_panel()
+        self.assertFalse(panel.closing)
+        self.assertTrue(panel.isVisible())
+        panel.step(1e-6)
+        self.assertAlmostEqual(panel._ouverture.value, mi_chemin, places=3,
+                               msg="l'ouverture est repartie de zéro")
+
+    # -- ça s'arrête -------------------------------------------------------
+
+    def test_l_animation_finit_par_s_arreter(self) -> None:
+        """Le §3 dans cette couche. `_settle` lève si le tic tourne sans fin."""
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+        self.assertFalse(panel.step(1.0 / 60.0),
+                         "le panneau ouvert et immobile continue de s'animer")
+
+    def test_la_fermeture_masque_le_panneau_a_la_fin(self) -> None:
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+
+        panel.close_panel()
+        self.assertTrue(panel.isVisible(), "masqué avant d'être parti")
+        _settle(panel)
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(panel.closing)
+
+    def test_la_fermeture_immediate_ne_laisse_rien_en_vol(self) -> None:
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        panel.close_panel(immediat=True)
+        self.assertFalse(panel.isVisible())
+        self.assertFalse(panel.step(1.0 / 60.0))
+
+    def test_un_changement_de_page_ne_laisse_pas_de_ressort_orphelin(self) -> None:
+        """Sans purge, vingt navigations laissent vingt jeux de ressorts qu'on
+        continuerait d'avancer, et le tic ne s'arrêterait plus jamais."""
+        panel = self._panel()
+        panel.open_panel()
+        for page in ("status", "interactions", "shop", "settings", "menu"):
+            panel.open_page(page)
+            _settle(panel)
+
+        attendues = {b.action for b in panel._layout().buttons}
+        self.assertEqual(set(panel._survol._ressorts), attendues)
+        self.assertEqual(set(panel._appui._ressorts), attendues)
+
+    def test_un_bouton_grise_ne_reagit_pas_au_survol(self) -> None:
+        """Il répondrait à un geste qu'il refusera ensuite."""
+        from pet.brain.brain import Brain
+        from pet.brain.needs import Needs
+        from pet.ui.panel import CarePanel
+
+        panel = CarePanel(_FauxSession(Brain(Needs()), "Boulon"))
+        self.addCleanup(panel.close)
+        # Un objet de soin traîne déjà sur le bureau : les trois soins qui en
+        # produisent un se grisent ensemble. C'est la façon la plus sûre
+        # d'obtenir un bouton désactivé sans dépendre des délais du brain.
+        panel.item_pending = True
+        panel.open_page("interactions")
+        panel.open_panel()
+        _settle(panel)
+
+        boutons = panel._layout().buttons
+        grises = [i for i, b in enumerate(boutons) if not b.enabled]
+        self.assertTrue(grises, "aucun bouton grisé : le montage est faux")
+        index = grises[0]
+        panel._hover = index
+        panel._sync_targets(boutons)
+        _settle(panel)
+        self.assertEqual(panel._survol.value(boutons[index].action), 0.0)
+
+    # -- la peinture -------------------------------------------------------
+
+    def test_la_peinture_traverse_toute_l_ouverture(self) -> None:
+        """`paintEvent` applique une transformation : il faut la peindre.
+
+        Le reste de la classe teste des nombres. Celui-ci rend réellement, à
+        chaque étape de l'ouverture, pour qu'un `save()` sans `restore()` ou
+        une transformation appliquée au mauvais moment sorte ici et pas chez
+        l'utilisateur.
+        """
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
+
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+
+        rendus = []
+        while True:
+            image = QPixmap(panel.size())
+            image.fill(Qt.GlobalColor.transparent)
+            panel.render(image)
+            rendus.append(image.toImage())
+            if not panel.step(1.0 / 60.0):
+                break
+
+        self.assertGreater(len(rendus), 4, "l'ouverture n'a presque pas d'images")
+        # La première image et la dernière doivent différer : si elles sont
+        # identiques, la transformation n'a rien fait et le panneau a sauté.
+        self.assertNotEqual(rendus[0], rendus[-1],
+                            "toutes les images de l'ouverture sont identiques")
+
+    def test_la_peinture_supporte_un_bouton_enfonce(self) -> None:
+        """L'anneau d'appui long est peint **dans** la transformation du
+        bouton : cette page est la seule qui exerce les deux à la fois."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
+        from pet.ui.panel import HOLD_ACTIONS
+
+        panel = self._panel()
+        panel.open_page("settings")
+        panel.open_panel()
+        _settle(panel)
+
+        bouton = next(b for b in panel._layout().buttons
+                      if b.action in HOLD_ACTIONS)
+        panel.mousePressEvent(_FauxClic(bouton.rect.center()))
+        for _ in range(8):
+            panel._hold_tick()
+            panel.step(1.0 / 60.0)
+
+        self.assertGreater(panel._hold, 0.0, "l'appui long n'a pas démarré")
+        self.assertLess(panel._echelle_bouton(bouton.action), 1.0)
+        image = QPixmap(panel.size())
+        image.fill(Qt.GlobalColor.transparent)
+        panel.render(image)
+
+    # -- les faits émis ----------------------------------------------------
+
+    def test_l_ouverture_et_la_fermeture_sont_annoncees(self) -> None:
+        """Ce sont les deux faits dont le lot Sons partira."""
+        from pet.feedback import bus
+
+        vus = []
+        bus.subscribe("panneau_ouvert", lambda: vus.append("ouvert"))
+        bus.subscribe("panneau_ferme", lambda: vus.append("ferme"))
+        self.addCleanup(bus.clear)
+
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+        self.assertEqual(vus, ["ouvert"])
+
+        panel.close_panel()
+        self.assertEqual(vus, ["ouvert"], "annoncé fermé avant de l'être")
+        _settle(panel)
+        self.assertEqual(vus, ["ouvert", "ferme"])
 
 
 class IconTest(unittest.TestCase):
@@ -957,6 +1270,94 @@ class AppearanceStoreTest(unittest.TestCase):
         attendu = hex_to_rgb(BODY_COLORS[autre])
         for obtenu, cible in zip(costume.parts[0].color, attendu):
             self.assertAlmostEqual(obtenu, cible, places=3)
+
+
+class BubblePopTest(unittest.TestCase):
+    """L'arrivée de la bulle, sur ressort depuis le lot L9 (CDC §10).
+
+    Avant ce lot, `bubble_scale` valait l'opacité : la bulle grandissait
+    exactement au rythme où elle apparaissait, par une interpolation vers la
+    cible — c'est-à-dire le mouvement linéaire que le §10 proscrit. Elle
+    n'arrivait pas, elle se matérialisait.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    def setUp(self) -> None:
+        import os
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("LOCALAPPDATA")
+        os.environ["LOCALAPPDATA"] = self._dir.name
+
+    def tearDown(self) -> None:
+        import os
+        if self._old is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = self._old
+        self._dir.cleanup()
+
+    def _window(self):
+        from pet.app.window import PetWindow
+        from pet.brain.session import Session
+        from pet.state import save
+
+        settings = save.settings_store()
+        settings.load()
+        genome, _ = save.load_or_create_genome()
+        session = Session()
+        session.load()
+        w = PetWindow(settings, genome, session=session)
+        w.show()
+        try:
+            w.start()
+        except Exception as exc:                       # pragma: no cover
+            raise unittest.SkipTest("rendu indisponible : %s" % exc)
+        w.hide()
+        return w
+
+    def test_l_echelle_depasse_avant_de_se_poser(self) -> None:
+        w = self._window()
+        try:
+            # Un besoin au plancher fait apparaître la bulle ; la scène
+            # d'arrivée est terminée, donc rien ne la retient.
+            w._onboarding = False
+            w._intro_phase = ""
+            w.brain.needs.hunger = 0.0
+
+            maximum = 0.0
+            for _ in range(240):
+                w._step_bubble(1.0 / 120.0, 0.0)
+                maximum = max(maximum, w.scene.bubble_scale)
+            self.assertGreater(
+                maximum, 1.02,
+                "la bulle n'arrive pas, elle apparaît : aucun dépassement")
+        finally:
+            w.shutdown()
+
+    def test_l_echelle_ne_passe_jamais_sous_zero(self) -> None:
+        """Au retour, un ressort sous-amorti passerait **sous** zéro : la bulle
+        se retournerait un instant avant de disparaître. D'où l'amortissement
+        critique à la fermeture."""
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            w.brain.needs.hunger = 0.0
+            for _ in range(240):
+                w._step_bubble(1.0 / 120.0, 0.0)
+
+            w.brain.needs.hunger = 100.0
+            minimum = 1.0
+            for _ in range(360):
+                w._step_bubble(1.0 / 120.0, 0.0)
+                minimum = min(minimum, w.scene.bubble_scale)
+            self.assertGreaterEqual(minimum, 0.0)
+        finally:
+            w.shutdown()
 
 
 class IntroSequenceTest(unittest.TestCase):

@@ -30,12 +30,15 @@ from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLineEdit, QToolTip, QWidget
 
+from ..anim.easing import ease_in, ease_out_back
 from ..brain.economy import DAILY_CAP
 from ..brain.needs import NEEDS
+from ..feedback import bus
 from ..geometry.cosmetics import NONE, SLOTS, by_slot, price as cosmetic_price
 from ..genome.schema import ACCENT_COLORS, BODY_COLORS, hex_to_rgb
 from .item import ITEM_KINDS
 from .icons import MOOD_ICONS, center_square, draw_icon
+from .motion import SpringBank, Ticker, Tween
 
 # -- métriques, toutes en pixels logiques Qt ---------------------------------
 #
@@ -77,6 +80,46 @@ SHOP_COLUMNS = 4
 # confirmation : la durée tient lieu de « êtes-vous sûr ».
 HOLD_SECONDS = 2.0
 HOLD_TICK_MS = 30
+
+# -- animation (lot L9) ------------------------------------------------------
+#
+# Durées dissymétriques, et c'est voulu : on regarde une interface s'ouvrir, on
+# ne regarde pas une interface se fermer. Une sortie aussi longue que l'entrée
+# donne l'impression que le logiciel traîne.
+OPEN_SECONDS = 0.26
+CLOSE_SECONDS = 0.15
+
+# Échelle du panneau au tout début de son ouverture. Pas zéro : un panneau qui
+# naît d'un point est un effet de diaporama. Il arrive presque à sa taille, et
+# `ease_out_back` lui fait dépasser la sienne d'un cheveu avant de se poser —
+# c'est ce dépassement, et lui seul, qui fait la différence de sensation.
+OPEN_SCALE = 0.92
+
+# Réponse des boutons. L'appui **enfonce** — échelle inférieure à 1 — et le
+# relâchement repasse par-dessus grâce au sous-amortissement du ressort. Le
+# survol soulève à peine : il signale, il ne célèbre pas.
+PRESS_SCALE = 0.88
+HOVER_SCALE = 1.04
+PRESS_SPRING = (34.0, 0.55)          # omega, zeta — vif, et il dépasse
+HOVER_SPRING = (26.0, 0.85)          # plus calme, presque sans dépassement
+
+
+def _melange(a: QColor, b: QColor, t: float) -> QColor:
+    """Interpole deux couleurs.
+
+    `t` est borné, à la différence de l'échelle : un ressort sous-amorti passe
+    au-dessus de 1, ce qu'on veut voir sur une taille — c'est le dépassement du
+    §10 — mais pas sur une couleur, où cela ne donnerait qu'une teinte hors
+    gamme, saturée au hasard du canal qui sature le premier.
+    """
+    t = max(0.0, min(1.0, t))
+    return QColor(
+        round(a.red() + (b.red() - a.red()) * t),
+        round(a.green() + (b.green() - a.green()) * t),
+        round(a.blue() + (b.blue() - a.blue()) * t),
+        round(a.alpha() + (b.alpha() - a.alpha()) * t),
+    )
+
 
 # Couleurs. Fixes et non génétiques, comme la bulle : c'est de l'interface, elle
 # doit rester lisible quelle que soit la teinte du robot tiré.
@@ -283,6 +326,20 @@ class CarePanel(QWidget):
         # ensemble tant qu'il n'est ni rejoint ni évaporé.
         self.item_pending = False
 
+        # -- animation (lot L9) ---------------------------------------------
+        #
+        # L'état d'animation vit **à côté** de la mise en page, jamais dedans :
+        # `_layout()` reste une fonction pure de la session, recalculée à chaque
+        # peinture, et c'est ce qui rend le panneau simple. Les ressorts sont
+        # indexés par `Button.action`, l'identité que le test de clic utilise
+        # déjà — un indice de rangée ne survivrait pas à un changement de page.
+        self._ouverture = Tween(0.0)
+        self._survol = SpringBank(*HOVER_SPRING)
+        self._appui = SpringBank(*PRESS_SPRING)
+        self._appui_action = ""
+        self._fermeture = False
+        self._ticker = Ticker(self.step, self.update, self)
+
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -310,15 +367,114 @@ class CarePanel(QWidget):
             "QLineEdit { background: #FFFFFF; border: 2px solid #1FA8BA;"
             " border-radius: 9px; color: #141A21; padding: 3px; }")
 
+    # -- ouverture et fermeture (lot L9) -----------------------------------
+
+    def open_panel(self) -> None:
+        """Montre le panneau, et le fait arriver.
+
+        Repartir de la valeur atteinte plutôt que de zéro compte : rouvrir un
+        panneau qui n'a pas fini de se fermer doit le rattraper en vol, pas le
+        faire disparaître pour le refaire naître.
+        """
+        deja_visible = self.isVisible()
+        self._fermeture = False
+        if not deja_visible:
+            self._ouverture.jump(0.0)
+            self.show()
+        self._ouverture.to(1.0, OPEN_SECONDS, ease_out_back)
+        self._ticker.wake()
+        if not deja_visible:
+            bus.emit("panneau_ouvert")
+
+    def close_panel(self, immediat: bool = False) -> None:
+        """Referme. `immediat` saute l'animation.
+
+        Le mode immédiat n'est pas un raccourci de confort. Il sert quand ce
+        que le panneau peint est en train de disparaître sous lui : à la
+        réinitialisation, la session qu'il lit à chaque image est effacée, et
+        une fermeture animée continuerait de la lire pendant ce temps.
+        """
+        if not self.isVisible():
+            return
+        if immediat:
+            self._fermeture = False
+            self._ouverture.jump(0.0)
+            self._ticker.stop()
+            self.hide()
+            bus.emit("panneau_ferme")
+            return
+        if self._fermeture:
+            return
+        self._fermeture = True
+        self._ouverture.to(0.0, CLOSE_SECONDS, ease_in)
+        self._ticker.wake()
+
+    @property
+    def closing(self) -> bool:
+        """Une fermeture est en cours. Le panneau est encore visible."""
+        return self._fermeture
+
+    def step(self, dt: float) -> bool:
+        """Avance l'animation de `dt`. Rend `True` tant que quelque chose bouge.
+
+        Point d'entrée unique, appelé par le `Ticker` en production et
+        directement par les tests avec un `dt` synthétique — sans timer, sans
+        horloge réelle, donc sans durée fausse.
+        """
+        bouge = self._ouverture.step(dt)
+        bouge = self._survol.step(dt) or bouge
+        bouge = self._appui.step(dt) or bouge
+
+        if self._fermeture and not self._ouverture.moving:
+            self._fermeture = False
+            self.hide()
+            bus.emit("panneau_ferme")
+            return False
+        return bouge
+
+    def _sync_targets(self, boutons: list[Button]) -> None:
+        """Pose les cibles de survol et d'appui, et oublie les disparus.
+
+        Appelée depuis les gestes de souris, jamais depuis `paintEvent` : une
+        peinture qui modifie l'état d'animation se rappellerait elle-même.
+        """
+        cles = [b.action for b in boutons]
+        survole = boutons[self._hover].action if 0 <= self._hover < len(boutons) else ""
+        for bouton in boutons:
+            # Un bouton grisé ne réagit pas au survol : il répondrait à un
+            # geste qu'il refusera ensuite.
+            self._survol.target(bouton.action,
+                                1.0 if (bouton.enabled and bouton.action == survole) else 0.0)
+            self._appui.target(bouton.action,
+                               1.0 if bouton.action == self._appui_action else 0.0)
+        self._survol.keep(cles)
+        self._appui.keep(cles)
+        self._ticker.wake()
+
+    def _echelle_bouton(self, action: str) -> float:
+        """Échelle peinte d'un bouton : l'appui enfonce, le survol soulève."""
+        appui = self._appui.value(action)
+        survol = self._survol.value(action)
+        return (1.0
+                + (PRESS_SCALE - 1.0) * appui
+                + (HOVER_SCALE - 1.0) * survol * max(0.0, 1.0 - appui))
+
     # -- navigation --------------------------------------------------------
 
     def open_page(self, page: str) -> None:
         if page not in PAGES:
             return
+        change = page != self.page
         self.page = page
         layout = self._layout()
         self.setFixedHeight(layout.height)
         self._hover = -1
+        # Les ressorts de la page quittée n'ont plus d'objet : leurs boutons
+        # n'existent plus. Sans cette purge, le tic ne s'arrêterait jamais.
+        self._appui_action = ""
+        self._sync_targets(layout.buttons)
+        if change:
+            bus.emit("page_changee", page=page)
 
         if page == "name":
             self._edit.setGeometry(PAD, self._top(), WIDTH - 2 * PAD,
@@ -338,6 +494,7 @@ class CarePanel(QWidget):
         texte = self._edit.text()
         if texte.strip():
             self.name_submitted.emit(texte)
+            bus.emit("nom_donne", nom=texte.strip())
 
     # -- géométrie ---------------------------------------------------------
 
@@ -528,6 +685,25 @@ class CarePanel(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
+        # Arrivée du panneau (lot L9). L'échelle et l'opacité sont **peintes**,
+        # la géométrie du widget ne bouge pas : animer `setGeometry` ferait
+        # travailler le gestionnaire de fenêtres trente fois par seconde pour
+        # un widget translucide toujours au-dessus, et le résultat saccade.
+        #
+        # L'ancrage est le bas-centre : le panneau se pose au-dessus de la tête
+        # du pet, et grandir depuis ce point-là donne l'impression qu'il en
+        # sort. Grandir depuis le centre le ferait apparaître de nulle part.
+        ouverture = self._ouverture.value
+        # `abs(... - 1)` et non `< 1` : `ease_out_back` **dépasse** 1 avant de
+        # revenir, et c'est ce dépassement que le §10 réclame. Un test qui ne
+        # regarderait que « pas encore ouvert » le supprimerait sans bruit.
+        if abs(ouverture - 1.0) > 1e-3:
+            painter.setOpacity(max(0.0, min(1.0, ouverture)))
+            k = OPEN_SCALE + (1.0 - OPEN_SCALE) * ouverture
+            painter.translate(self.width() / 2.0, float(self.height()))
+            painter.scale(k, k)
+            painter.translate(-self.width() / 2.0, -float(self.height()))
+
         fond = QPainterPath()
         fond.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1.0,
                                    self.height() - 1.0), 18.0, 18.0)
@@ -554,9 +730,27 @@ class CarePanel(QWidget):
                       QRectF((WIDTH - 62) / 2.0, PAD + 7, 62, 62), INK_OFF)
 
         for index, button in enumerate(layout.buttons):
+            # Échelle autour du **centre du bouton** : depuis l'origine du
+            # panneau, un bouton du bas se déplacerait de trente pixels pour se
+            # contracter de quatre.
+            #
+            # La transformation enveloppe aussi l'anneau d'appui long : il
+            # entoure le bouton, il doit s'enfoncer avec lui. Peint en dehors,
+            # il flotterait autour d'un bouton rétréci — et c'est justement sur
+            # un appui maintenu qu'on a tout le temps de le remarquer.
+            echelle = self._echelle_bouton(button.action)
+            transforme = abs(echelle - 1.0) > 1e-4
+            if transforme:
+                centre = button.rect.center()
+                painter.save()
+                painter.translate(centre)
+                painter.scale(echelle, echelle)
+                painter.translate(-centre)
             self._paint_button(painter, button, index == self._hover)
             if button.action == self._hold_action and self._hold > 0.0:
                 self._paint_hold(painter, button)
+            if transforme:
+                painter.restore()
         painter.end()
 
     def _paint_header(self, painter: QPainter, layout: Layout) -> None:
@@ -731,10 +925,13 @@ class CarePanel(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         if not button.enabled:
             fond, encre = BUTTON_OFF, INK_OFF
-        elif hover:
-            fond, encre = BUTTON_HOVER, INK
         else:
-            fond, encre = BUTTON_BG, INK
+            # Le survol se **mélange** au lieu de commuter : un aplat qui
+            # change d'un coup sous le curseur est le seul mouvement de
+            # l'interface qu'on remarque comme un défaut.
+            fond = _melange(BUTTON_BG, BUTTON_HOVER,
+                            self._survol.value(button.action))
+            encre = INK
         painter.setBrush(fond)
         painter.drawRoundedRect(button.rect, RADIUS, RADIUS)
         draw_icon(painter, button.icon, center_square(button.rect), encre)
@@ -780,9 +977,10 @@ class CarePanel(QWidget):
         if index == self._hover:
             return
         self._hover = index
+        boutons = self._layout().buttons
+        self._sync_targets(boutons)
         self.update()
 
-        boutons = self._layout().buttons
         if index < 0 or index >= len(boutons):
             QToolTip.hideText()
             return
@@ -801,6 +999,10 @@ class CarePanel(QWidget):
         QToolTip.hideText()
         if self._hover != -1:
             self._hover = -1
+            # Le curseur peut sortir du panneau bouton enfoncé : relâcher la
+            # cible d'appui ici évite un bouton resté écrasé pour toujours.
+            self._appui_action = ""
+            self._sync_targets(self._layout().buttons)
             self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (API Qt)
@@ -810,7 +1012,13 @@ class CarePanel(QWidget):
             return
         button = boutons[index]
         if not button.enabled:
+            # Un refus est un fait, au même titre qu'une acceptation : c'est
+            # lui que le lot Sons voudra sonoriser d'un « non » sec.
+            bus.emit("bouton_refuse", action=button.action)
             return
+        self._appui_action = button.action
+        self._sync_targets(boutons)
+        self.update()
         if button.action in HOLD_ACTIONS:
             # Geste destructeur : il faut **maintenir**. L'interface n'ayant pas
             # de texte, aucune boîte de dialogue ne peut demander confirmation,
@@ -842,13 +1050,24 @@ class CarePanel(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (API Qt)
         self._cancel_hold()
+        if self._appui_action:
+            # Le relâchement rend la main au ressort, qui est sous-amorti :
+            # le bouton repasse **au-dessus** de sa taille avant de se poser.
+            # C'est là que se joue la sensation de rebond, pas à l'appui.
+            self._appui_action = ""
+            self._sync_targets(self._layout().buttons)
+            self.update()
 
     def _activate(self, action: str) -> None:
+        # Le fait brut, avant toute interprétation. Le panneau sait qu'un
+        # bouton a été activé ; il ne sait pas encore si le soin sera accepté
+        # ni si la bourse suffira — ces faits-là appartiennent à qui en décide.
+        bus.emit("bouton_active", action=action)
         if action == "back":
             # Depuis une sous-page on remonte, depuis la racine on ferme : le
             # même geste veut dire « un cran en arrière » aux deux endroits.
             if self.page == "menu":
-                self.hide()
+                self.close_panel()
             elif self.page in SHOP_PAGES:
                 # D'un rayon on remonte aux catégories, pas au menu : sinon
                 # essayer deux chapeaux demanderait de retraverser le panneau.
@@ -865,6 +1084,7 @@ class CarePanel(QWidget):
         if "=" in action:
             param, valeur = action.split("=", 1)
             self.appearance_chosen.emit(param, valeur)
+            bus.emit("apparence_changee", param=param, cle=valeur)
             self.update()
             return
         if action == "check":
@@ -877,6 +1097,7 @@ class CarePanel(QWidget):
             return
         if action == "autostart":
             self.autostart_toggled.emit()
+            bus.emit("reglage_bascule", reglage="autostart")
             self.update()
             return
         if action in CARE_ACTIONS:
@@ -885,6 +1106,6 @@ class CarePanel(QWidget):
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 (API Qt)
         if event.key() == Qt.Key.Key_Escape:
-            self.hide()
+            self.close_panel()
             return
         super().keyPressEvent(event)

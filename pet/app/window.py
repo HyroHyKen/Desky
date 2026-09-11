@@ -36,6 +36,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QWidget
 
+from ..anim.easing import Spring
 from ..anim.layers import AnimContext, Animator
 from ..anim.locomotion import Locomotion, Terrain
 from ..brain.session import Session
@@ -65,6 +66,14 @@ EDGE_INSET = 0.35
 # ce pet ne notifie jamais rien (§12).
 BUBBLE_FADE_IN = 0.45
 BUBBLE_FADE_OUT = 0.22
+
+# Ressort d'arrivée de la bulle (lot L9). `zeta` en dessous de 1 fait dépasser
+# la taille cible d'environ 12 %, ce qui se lit sans se remarquer ; au retour on
+# repasse en amortissement critique, faute de quoi l'échelle passerait sous
+# zéro.
+BUBBLE_POP_OMEGA = 17.0
+BUBBLE_POP_ZETA = 0.52
+BUBBLE_CLOSE_ZETA = 1.0
 
 # Durée d'affichage par les yeux après un clic sur la bulle. Assez long pour
 # être lu sans avoir à se dépêcher, assez court pour que le pet redevienne
@@ -316,6 +325,16 @@ class PetWindow(QWidget):
         # publie qu'un **nom de besoin**, par `Needs.want`.
         self._bubble_want = ""
         self._bubble_opacity = 0.0
+        # L'échelle de la bulle est un **ressort**, pas un fondu (lot L9). Elle
+        # arrive en dépassant sa taille puis se pose : c'est l'arrivée que le
+        # §10 demande, et c'est ce qui distingue une bulle qui « pop » d'une
+        # bulle qui se contente d'apparaître.
+        #
+        # Sous-amorti à l'aller, critique au retour. Un ressort sous-amorti
+        # ramené à zéro passe **sous** zéro, c'est-à-dire une échelle négative :
+        # la bulle se retournerait un instant avant de disparaître.
+        self._bubble_scale = Spring(0.0, omega=BUBBLE_POP_OMEGA,
+                                    zeta=BUBBLE_POP_ZETA)
         self._eye_left = 0
         self._eye_right = 0
         self._eye_left_seconds = 0.0
@@ -991,9 +1010,14 @@ class PetWindow(QWidget):
                 self._eye_left_seconds = 0.0
 
         cible = 1.0 if self._bubble_want else 0.0
+        # L'opacité reste un fondu : un fondu n'est pas un mouvement, et une
+        # opacité qui dépasse serait écrêtée sans rien donner à voir.
         tau = BUBBLE_FADE_IN if cible > self._bubble_opacity else BUBBLE_FADE_OUT
         self._bubble_opacity += (cible - self._bubble_opacity) * min(
             1.0, dt / max(1e-3, tau))
+        self._bubble_scale.zeta = (BUBBLE_POP_ZETA if cible > 0.0
+                                   else BUBBLE_CLOSE_ZETA)
+        self._bubble_scale.step(cible, dt)
 
         scene = self.scene
         if scene is None:
@@ -1002,7 +1026,7 @@ class PetWindow(QWidget):
             "question" if self._bubble_want == "question"
             else GLYPH_FOR_NEED.get(self._bubble_want, ""))
         scene.bubble_opacity = self._bubble_opacity
-        scene.bubble_scale = self._bubble_opacity
+        scene.bubble_scale = max(0.0, float(self._bubble_scale.value))
         scene.bubble_pulse = 0.5 + 0.5 * math.sin(
             now * 2.0 * math.pi / BUBBLE_PULSE_PERIOD)
 
@@ -1291,13 +1315,14 @@ class PetWindow(QWidget):
         panel = self._ensure_panel()
         panel.open_page("name")
         self.place_panel()
-        panel.show()
+        panel.open_panel()
 
     # -- panneau de soin (lot L6 phase B) ------------------------------------
 
     @property
     def panel_open(self) -> bool:
-        return self.panel is not None and self.panel.isVisible()
+        return (self.panel is not None and self.panel.isVisible()
+                and not self.panel.closing)
 
     def _ensure_panel(self) -> CarePanel:
         if self.panel is None:
@@ -1319,13 +1344,13 @@ class PetWindow(QWidget):
         if self._onboarding:
             return
         if self.panel_open:
-            self.panel.hide()
+            self.panel.close_panel()
             return
         panel = self._ensure_panel()
         panel.item_pending = self.item_pending
         panel.open_page("menu")
         self.place_panel()
-        panel.show()
+        panel.open_panel()
         # Le pet cesse de flâner tant qu'on s'occupe de lui : un panneau qui
         # court après un robot en mouvement serait illisible, et rester tranquille
         # quand on le regarde est de toute façon ce qu'il ferait.
@@ -1446,7 +1471,10 @@ class PetWindow(QWidget):
         from ..state import save
 
         if self.panel is not None:
-            self.panel.hide()
+            # Sans animation : la session que le panneau peint est sur le point
+            # d'être effacée, et le regarder se fermer joliment en lisant des
+            # données à demi réinitialisées n'a rien de gracieux.
+            self.panel.close_panel(immediat=True)
         log.info("réinitialisation demandée")
         try:
             self.session.flush(force=False)
@@ -1523,7 +1551,7 @@ class PetWindow(QWidget):
         if not accepte:
             return
         if self.panel is not None:
-            self.panel.hide()
+            self.panel.close_panel()
         if self.animator is not None:
             self.animator.play("celebrate")
         self.show_in_eyes("robot", "robot", seconds=2.0)
