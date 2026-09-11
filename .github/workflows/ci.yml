@@ -71,9 +71,21 @@ jobs:
           # d'ouvrir l'opengl32.dll de Mesa plutôt que celle du système, qui sur
           # un runner ne propose qu'un GL 1.1 logiciel.
           GLCONTEXT_WIN_LIBGL: C:\msys64\mingw64\bin\opengl32.dll
-          # Aucun display sur le runner : Qt doit rendre hors écran. Les tests
-          # d'interface instancient de vrais QWidget (cf. tests/qt_app.py).
-          QT_QPA_PLATFORM: offscreen
+          #
+          # **Surtout pas `QT_QPA_PLATFORM=offscreen` ici.** Le réflexe vient de
+          # Linux, où il n'y a pas de serveur X ; un runner Windows a un vrai
+          # bureau (1024x768) et un vrai gestionnaire de fenêtres.
+          #
+          # La plateforme `offscreen` ne rend pas seulement hors écran : elle
+          # cesse de créer des fenêtres natives. `winId()` retourne alors un
+          # pseudo-handle (1), et `win32.monitor_from_window()` rend un moniteur
+          # dégénéré — zone de travail (0, 0, 0, 0). Tout ce qui raisonne sur la
+          # place disponible à l'écran devient faux sans lever d'exception :
+          # `emerge_at` compare la position du robot au centre d'un écran de
+          # largeur nulle et le fait bondir du mauvais côté.
+          #
+          # C'est exactement ce que le §6 demande de tester, et c'est indissociable
+          # d'un HWND réel. On laisse donc Qt prendre la plateforme `windows`.
         run: |
           # MSYS2 pose son propre python.exe dans le PATH de MINGW64 ; il
           # prendrait le pas sur celui de setup-python et n'a aucune de nos
