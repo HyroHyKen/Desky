@@ -68,6 +68,34 @@ class ResourceResolutionTest(unittest.TestCase):
                          % coupables)
 
 
+class EntryPointTest(unittest.TestCase):
+    """Le point d'entrée gelé n'a pas de paquet parent.
+
+    `python -m pet` pose `__package__ = "pet"` ; PyInstaller exécute le même
+    fichier comme un script de premier niveau, sans rien poser du tout. Un
+    import relatif y lève `ImportError: attempted relative import with no known
+    parent package` avant la première ligne utile — et seulement dans la version
+    distribuée, ce qui en fait un défaut qu'aucun lancement depuis les sources
+    ne peut révéler.
+
+    C'est la régression que ce test empêche : elle a coûté une release.
+    """
+
+    def test_le_point_d_entree_n_importe_rien_relativement(self) -> None:
+        arbre = ast.parse((PET / "__main__.py").read_text(encoding="utf-8"))
+        relatifs = [noeud for noeud in ast.walk(arbre)
+                    if isinstance(noeud, ast.ImportFrom) and noeud.level > 0]
+        self.assertEqual(
+            ["." * n.level + (n.module or "") for n in relatifs], [],
+            "pet/__main__.py doit importer en absolu : il est gelé sans paquet parent")
+
+    def test_le_spec_gele_bien_ce_point_d_entree(self) -> None:
+        """Si le spec visait un autre script, le test ci-dessus ne garderait
+        rien du tout."""
+        spec = (PACKAGING / "desky.spec").read_text(encoding="utf-8")
+        self.assertIn('"__main__.py"', spec.replace("'", '"'))
+
+
 class SpecTest(unittest.TestCase):
     """Le manifeste de gel doit déclarer ce que le code lit."""
 

@@ -8,4 +8,4 @@ se fait en une ligne.
 
 APP_NAME = "Desky"
 APP_ID = "Desky.DesktopPet"          # base du mutex nommé (instance unique)
-VERSION = "0.11.0-L8"                 # exécutable, icône et installateur
+VERSION = "0.11.1-L8"                 # exécutable, icône et installateur
