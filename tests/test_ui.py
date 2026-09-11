@@ -1475,6 +1475,108 @@ class BubblePopTest(unittest.TestCase):
             w.shutdown()
 
 
+class LandingTest(unittest.TestCase):
+    """L'encaissement, branché sur la vraie chute (lot L10).
+
+    `test_impact` vérifie le ressort seul. Ici on vérifie le **câblage** : que
+    la chute appelle bien l'encaissement, que la force annoncée sur le bus suit
+    la violence du choc, et que les canaux atteignent l'animateur. C'est la
+    moitié qu'un test de module ne couvre jamais.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    setUp = BubblePopTest.setUp
+    tearDown = BubblePopTest.tearDown
+    _window = BubblePopTest._window
+
+    def _chute(self, hauteur: float):
+        """Lâche le pet de `hauteur` pixels au-dessus du sol."""
+        from pet.app.window import floor_y
+
+        w = self._window()
+        w._onboarding = False
+        w._intro_phase = ""
+        _, _, _, ph = w._pet_rect()
+        w._y = floor_y(w.current_monitor().work, ph) - hauteur
+        w._vy = 0.0
+        w._falling = True
+        return w, ph
+
+    def test_une_chute_finit_par_un_encaissement(self) -> None:
+        from pet.feedback import bus
+
+        chocs = []
+        bus.subscribe("atterri", lambda force, vitesse: chocs.append(force))
+        self.addCleanup(bus.clear)
+
+        w, ph = self._chute(400.0)
+        try:
+            # Le ressort est avancé par la boucle de rendu, pas par la chute :
+            # on rejoue les deux, comme `_on_render` les enchaîne.
+            creux = 0.0
+            for _ in range(240):
+                w._impact.step(1.0 / 120.0)
+                w._step_fall(1.0 / 120.0, ph)
+                creux = min(creux, w._impact.flex)
+            self.assertTrue(chocs, "le pet s'est posé sans rien encaisser")
+            self.assertGreater(chocs[0], 0.0)
+            self.assertLessEqual(chocs[0], 1.0)
+            self.assertLess(creux, -0.01, "il touche le sol sans s'écraser")
+            self.assertTrue(w._impact.settled,
+                            "l'encaissement dure encore deux secondes après")
+        finally:
+            w.shutdown()
+
+    def test_la_force_suit_la_hauteur_de_chute(self) -> None:
+        """C'est ce qui distingue un impact d'une animation d'impact : la même
+        courbe jouée quelle que soit la chute se remarque au bout de deux
+        minutes d'usage."""
+        from pet.feedback import bus
+
+        forces = []
+        for hauteur in (60.0, 600.0):
+            chocs = []
+            bus.clear()
+            bus.subscribe("atterri", lambda force, vitesse: chocs.append(force))
+            w, ph = self._chute(hauteur)
+            try:
+                for _ in range(240):
+                    w._step_fall(1.0 / 120.0, ph)
+            finally:
+                w.shutdown()
+            forces.append(max(chocs) if chocs else 0.0)
+        bus.clear()
+        self.assertLess(forces[0], forces[1],
+                        "une chute de 6 cm et une de 60 cm encaissent pareil")
+
+    def test_le_corps_s_etire_pendant_la_chute(self) -> None:
+        w, ph = self._chute(900.0)
+        try:
+            for _ in range(30):
+                w._step_fall(1.0 / 120.0, ph)
+            self.assertTrue(w._falling, "déjà posé : la chute est trop courte")
+            self.assertGreater(w._impact.flex, 0.0,
+                               "il tombe sans s'allonger")
+        finally:
+            w.shutdown()
+
+    def test_un_clic_enfonce_le_robot(self) -> None:
+        """La réaction au clic passe par le rig depuis le lot L10, et non plus
+        par une échelle globale qui grossissait aussi la tête et le contour."""
+        w = self._window()
+        try:
+            w._impact.poke()
+            w._impact.step(1.0 / 60.0)
+            canaux = w._impact.channels()
+            self.assertLess(canaux["body.flex"], 0.0)
+            self.assertLess(canaux["body.lift"], 0.0, "il ne s'enfonce pas")
+        finally:
+            w.shutdown()
+
+
 class IntroSequenceTest(unittest.TestCase):
     """La scène d'arrivée : il sort, se repère, vous voit, puis demande.
 

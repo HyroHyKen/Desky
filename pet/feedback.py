@@ -33,10 +33,12 @@ log = logging.getLogger("desky.feedback")
 # de frappe rendrait un abonnement silencieusement inerte, et ce silence-là se
 # diagnostique très mal — on ne voit pas un son qui ne part pas.
 #
-# Le catalogue grandira avec les lots : L10 y ajoutera les faits du mouvement
-# (`atterri`, `pousse`), L11 ceux de l'économie. Chacun garde la même forme —
-# ce qui s'est produit, au passé.
+# Le catalogue grandit avec les lots, et chaque entrée garde la même forme : ce
+# qui s'est produit, au passé, jamais ce qu'il faudrait en faire.
 EVENTS: frozenset[str] = frozenset({
+    # Mouvement du robot (lot L10)
+    "atterri",                  # {force, vitesse} — force dans [0, 1]
+    "pousse",                   # le pet a été cliqué
     # Panneau de soin
     "panneau_ouvert",
     "panneau_ferme",

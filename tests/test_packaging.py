@@ -68,6 +68,53 @@ class ResourceResolutionTest(unittest.TestCase):
                          % coupables)
 
 
+class RelativeImportTest(unittest.TestCase):
+    """Tout import relatif doit désigner un module qui existe.
+
+    La régression qui a motivé ce test : au lot L10, des méthodes ont changé de
+    dossier, et l'une d'elles gardait un `from ..state import save` qui désignait
+    désormais `pet.app.state` — inexistant. L'import étant **dans une fonction**,
+    rien n'échouait au chargement : la réinitialisation des données aurait levé
+    chez l'utilisateur, et seulement là.
+
+    C'est la faiblesse exacte des imports tardifs : Python ne les vérifie qu'à
+    l'exécution, et une branche rarement empruntée n'est jamais exécutée en
+    test. Une vérification statique les couvre toutes d'un coup, y compris
+    celles qu'aucun test n'atteint.
+    """
+
+    def test_chaque_import_relatif_designe_un_module_existant(self) -> None:
+        fautifs = []
+        for chemin in sorted(PET.rglob("*.py")):
+            # Paquet qui **contient** le module. Un `__init__.py` en fait partie
+            # comme les autres : `pet/app/parts/__init__.py` est contenu par
+            # `pet/app/parts`, donc son `from .care` y cherche `care`.
+            paquet = chemin.relative_to(RACINE).with_suffix("").parts[:-1]
+            arbre = ast.parse(chemin.read_text(encoding="utf-8"))
+            for noeud in ast.walk(arbre):
+                if not isinstance(noeud, ast.ImportFrom) or not noeud.level:
+                    continue
+                # Un point désigne le paquet contenant ; chaque point en plus
+                # remonte d'un cran.
+                remontee = noeud.level - 1
+                if remontee > len(paquet) - 1:
+                    fautifs.append("%s: remonte au-delà de la racine (%s)"
+                                   % (chemin.name, "." * noeud.level))
+                    continue
+                base = paquet[:len(paquet) - remontee]
+                cible = RACINE.joinpath(*base)
+                if noeud.module:
+                    cible = cible.joinpath(*noeud.module.split("."))
+                if not (cible.is_dir() or cible.with_suffix(".py").is_file()):
+                    fautifs.append(
+                        "%s:%d  %s%s"
+                        % (chemin.relative_to(RACINE).as_posix(), noeud.lineno,
+                           "." * noeud.level, noeud.module or ""))
+        self.assertEqual(fautifs, [],
+                         "imports relatifs qui ne mènent nulle part :\n  "
+                         + "\n  ".join(fautifs))
+
+
 class EntryPointTest(unittest.TestCase):
     """Le point d'entrée gelé n'a pas de paquet parent.
 

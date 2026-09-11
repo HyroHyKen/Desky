@@ -442,8 +442,14 @@ class Locomotion:
         if self._phase == "crouch":
             t = min(1.0, self._phase_t / CROUCH_TIME)
             # Anticipation : il se tasse avant de partir (CDC §10).
+            #
+            # `flex` **négatif** : positif étire le corps, et c'est le sens qui
+            # était écrit ici — le robot s'allongeait en s'accroupissant. Le
+            # défaut est resté invisible tant que `body.flex` n'agissait que sur
+            # la hauteur ; depuis que le volume est conservé (lot L10), un
+            # étirement amincit aussi, et l'erreur se voit.
             out["body.lift"] = -HOP_CROUCH * ease_in_out(t)
-            out["body.flex"] = HOP_SQUASH * ease_in_out(t)
+            out["body.flex"] = -HOP_SQUASH * ease_in_out(t)
             if self._phase_t >= CROUCH_TIME:
                 reste = self.target_x - self.x
                 pas = math.copysign(min(portee, abs(reste)), reste)
@@ -468,8 +474,10 @@ class Locomotion:
         if self._phase == "land":
             t = min(1.0, self._phase_t / LAND_TIME)
             # Écrasement puis récupération avec dépassement (CDC §10).
+            # Négatif pour la même raison qu'à l'accroupissement : écraser, ce
+            # n'est pas grandir.
             amorti = 1.0 - ease_out_back(t)
-            out["body.flex"] = HOP_SQUASH * amorti
+            out["body.flex"] = -HOP_SQUASH * amorti
             out["body.lift"] = -HOP_CROUCH * 0.5 * amorti
             self.velocity *= max(0.0, 1.0 - t)
             if self._phase_t >= LAND_TIME:

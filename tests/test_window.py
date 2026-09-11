@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from pet.app import win32
 from pet.app.clock import Regime, RenderClock
+from pet.anim.impact import Impact
 from pet.app.window import (PetWindow, choose_monitor, floor_y,
                             frac_to_position, position_to_frac)
 
@@ -231,7 +232,7 @@ class CuriousGazeTest(unittest.TestCase):
     WORK = (0, 0, 1920, 1160)
 
     def _gaze(self, seed: int = 3):
-        from pet.app.window import CuriousGaze
+        from pet.anim.curiosity import CuriousGaze
         return CuriousGaze(seed=seed)
 
     def _run(self, gaze, seconds: float, curious: bool, dt: float = 0.05):
@@ -270,7 +271,7 @@ class CuriousGazeTest(unittest.TestCase):
         self.assertGreaterEqual(min(suite), 20)
 
     def test_il_regarde_assez_loin_pour_que_ca_se_voie(self) -> None:
-        from pet.app.window import GLANCE_MIN_DISTANCE
+        from pet.anim.curiosity import GLANCE_MIN_DISTANCE
 
         vus = [p for p in self._run(self._gaze(), 200.0, curious=True)
                if p is not None]
@@ -307,7 +308,7 @@ class CuriousGazeTest(unittest.TestCase):
 
     def test_un_ecran_etroit_ne_boucle_pas(self) -> None:
         """Garde-fou : aucune place lointaine ne doit pas faire tourner en rond."""
-        from pet.app.window import CuriousGaze
+        from pet.anim.curiosity import CuriousGaze
 
         gaze = CuriousGaze(seed=1)
         vus = [gaze.update(0.05, True, (0, 0, 200, 200), 100.0, 220.0)
@@ -493,6 +494,9 @@ class FrameDemandTest(unittest.TestCase):
         w._eye_mix = 0.0
         w._intro_phase = ""
         w.item = None
+        # Un encaissement en cours déforme le corps sans déplacer la fenêtre :
+        # le prédicat le lit, donc le montage doit le fournir (lot L10).
+        w._impact = Impact()
         for cle, valeur in kwargs.items():
             setattr(w, cle, valeur)
         return w

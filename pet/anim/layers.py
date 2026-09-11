@@ -471,8 +471,18 @@ def apply_channels(pose: RigPose, channels: Channels, dims: Dimensions) -> FaceS
     # qui s'étireraient avec la respiration.
     flex = channels.get("body.flex", 0.0)
     if flex:
-        s = 1.0 + flex
-        pose.offset("body_flex", scale=(1.0, s, 1.0),
+        # Plancher : `body.flex` cumule la respiration, la démarche et
+        # l'encaissement du lot L10, et rien n'empêche la somme de descendre
+        # sous -1. Une échelle nulle aplatit le corps sur un plan, une échelle
+        # négative le retourne — deux façons de transformer un défaut de
+        # réglage en robot méconnaissable.
+        s = max(0.35, 1.0 + flex)
+        # **Volume conservé** : ce qui s'écrase s'élargit. Sans cette largeur,
+        # un corps comprimé rétrécit tout court, et le §10 n'y voit qu'un objet
+        # qui diminue au lieu d'un objet qui encaisse. C'est ce seul facteur qui
+        # sépare un écrasement d'une réduction de taille.
+        w = 1.0 / math.sqrt(s)
+        pose.offset("body_flex", scale=(w, s, w),
                     translation=(0.0, dims.body_b * (s - 1.0), 0.0))
         pose.offset("neck", translation=(0.0, 2.0 * dims.body_b * (s - 1.0), 0.0))
 

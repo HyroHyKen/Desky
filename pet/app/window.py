@@ -28,7 +28,6 @@ scaling sur un montage à DPI mixtes.
 from __future__ import annotations
 
 import logging
-import math
 import time
 
 import numpy as np
@@ -36,67 +35,48 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QWidget
 
+from ..anim.curiosity import CuriousGaze
 from ..anim.easing import Spring
+from ..anim.impact import Impact
 from ..anim.layers import AnimContext, Animator
 from ..anim.locomotion import Locomotion, Terrain
 from ..brain.session import Session
 from ..brain.sensors import Sensors
 from ..brain.utility import Plan, SelfState
+from ..feedback import bus
 from ..geometry.builder import Robot, build
 from ..render.context import RenderContext
-from ..render.glyphs import GLYPH_FOR_NEED, glyph_id
+from ..render.glyphs import GLYPH_FOR_NEED
 from ..render.scene import Scene
-from ..ui.item import ITEM_KINDS, REACH, SIZE_RATIO, ItemWindow, SpritePicker
+from ..ui.item import ItemWindow, SpritePicker
 from ..ui.panel import CarePanel
 from ..state.save import Store
 from . import win32
 from .clock import Regime, RenderClock
+# Réexportées : elles ont changé de fichier, pas de sens, et c'est de ce
+# module que les tests les importent depuis le lot L1.
+from .ground import (                                           # noqa: F401
+    choose_monitor, floor_y, frac_to_position, position_to_frac,
+)
+from .parts import (BehaviourMixin, CareMixin, DiagnosticsMixin, ItemsMixin,
+                    OnboardingMixin)
+from .parts.behaviour import BUBBLE_POP_OMEGA, BUBBLE_POP_ZETA
+# Réexportées : elles vivent désormais avec le code qui les utilise, mais
+# `INTRO_SCRIPTED` est lue par les tests depuis ce module, et rien ne justifie
+# de leur faire suivre un déménagement interne.
+from .parts.onboarding import (                                    # noqa: F401
+    INTRO_SCRIPTED, LEAP_VX, LEAP_VY, LOOK_SECONDS, SETTLE_SECONDS,
+    SURPRISE_SECONDS, SURPRISE_VY,
+)
 
 log = logging.getLogger("desky.window")
 
-# Marge autour du curseur quand le pet le suit : il s'arrête à côté, pas
-# dessus. Exprimée en largeurs de pet, la taille de rendu étant réglable.
-FOLLOW_GAP = 0.85
 
-# Retrait du bord d'écran pour `sniff_around`, en largeurs de pet.
-EDGE_INSET = 0.35
-
-# Constantes de temps de la bulle, en secondes. L'apparition est plus lente que
-# la disparition : une bulle qui surgit brutalement se lit comme une alerte, et
-# ce pet ne notifie jamais rien (§12).
-BUBBLE_FADE_IN = 0.45
-BUBBLE_FADE_OUT = 0.22
-
-# Ressort d'arrivée de la bulle (lot L9). `zeta` en dessous de 1 fait dépasser
-# la taille cible d'environ 12 %, ce qui se lit sans se remarquer ; au retour on
-# repasse en amortissement critique, faute de quoi l'échelle passerait sous
-# zéro.
-BUBBLE_POP_OMEGA = 17.0
-BUBBLE_POP_ZETA = 0.52
-BUBBLE_CLOSE_ZETA = 1.0
 
 # Durée d'affichage par les yeux après un clic sur la bulle. Assez long pour
 # être lu sans avoir à se dépêcher, assez court pour que le pet redevienne
-# lui-même sans qu'on ait à faire quoi que ce soit.
-EYE_SHOW_SECONDS = 2.6
-EYE_FADE = 0.18
 
-# Période de la respiration d'appel de la bulle.
-BUBBLE_PULSE_PERIOD = 2.4
 
-# Jeu entre le haut du pet et le bas du panneau, en pixels logiques.
-PANEL_GAP = 8
-
-# Coups d'oeil de curiosité : intervalle entre deux, et durée de chacun.
-# L'intervalle est large parce que c'est une **ponctuation** : trop fréquent, le
-# pet aurait l'air distrait plutôt que curieux.
-GLANCE_GAP = (7.0, 15.0)
-GLANCE_HOLD = (1.2, 2.6)
-
-# Distance minimale du point visé, en largeurs de pet. Un coup d'oeil vers un
-# point tout proche ne tourne pas la tête, donc ne se voit pas : autant ne pas
-# le jouer.
-GLANCE_MIN_DISTANCE = 2.2
 
 # Actions pendant lesquelles le pet est réputé curieux. Les trois partagent
 # déjà l'expression `curieux` ; la liste est explicite pour que le regard ne
@@ -108,16 +88,6 @@ CURIOUS_ACTIONS = frozenset({"sniff_around", "look_around", "idle_wander"})
 # fenêtre ne se déplace pas trente fois par seconde.
 FOREGROUND_REFRESH = 0.5
 
-# Distance d'apparition d'un objet de soin, en largeurs de pet. Assez loin pour
-# que l'aller vaille le coup d'oeil, assez près pour qu'on le retrouve sans
-# chercher — un objet lâché à l'autre bout d'un montage à trois écrans serait
-# une corvée, pas un jeu.
-ITEM_SPAWN_MIN = 2.0
-ITEM_SPAWN_MAX = 6.0
-
-# Hauteur de lâcher, en hauteurs d'objet : il tombe et rebondit, comme tout ce
-# qui arrive dans ce bureau.
-ITEM_DROP_HEIGHT = 1.6
 
 # Seuil de la surface cliquable (CDC §6).
 ALPHA_HIT_THRESHOLD = int(0.15 * 255)
@@ -153,137 +123,12 @@ RESTITUTION = 0.28            # part de vitesse conservée au rebond
 REST_VELOCITY = 45.0          # px/s en dessous desquels on considère posé
 FALL_DRAG = 1.1               # amortissement de la composante horizontale
 
-# Sortie du carton et présentations. Les durées sont celles d'une petite scène
-# muette : assez lentes pour se lire, assez courtes pour ne pas se faire
-# attendre. Le tout dure un peu moins de cinq secondes.
-LEAP_VX = 330.0               # px/s, élan horizontal hors du carton
-LEAP_VY = -300.0              # px/s, impulsion vers le haut du même bond
-SETTLE_SECONDS = 0.45         # temps de repos après l'atterrissage
-LOOK_SECONDS = 2.9            # il se repère, de gauche à droite
-SURPRISE_SECONDS = 1.4        # il vous voit, et sursaute
-SURPRISE_VY = -620.0          # px/s, le sursaut lui-même
-
-# Phases où le regard est **piloté par la scène** et non par le curseur : le pet
-# doit balayer l'écran puis regarder droit devant, et le suivi du curseur du
-# lot L4 contrarierait les deux.
-INTRO_SCRIPTED = ("emerging", "looking", "surprised")
 
 
-# --- Géométrie de position, en fonctions pures ------------------------------
-#
-# Isolées de la fenêtre pour être testables sans GPU ni hwnd, dans le même
-# esprit que la cloison brain / render du CDC §5.
 
 
-def position_to_frac(
-    x: float, y: float, pet: tuple[int, int], work: tuple[int, int, int, int]
-) -> tuple[float, int]:
-    """Position absolue -> (fraction horizontale, écart au sol).
-
-    Stocker une fraction et un écart au sol, plutôt que des pixels absolus,
-    garde la position juste après un changement de résolution.
-    """
-    pw, ph = pet
-    wl, wt, ww, wh = work
-    span = max(1, ww - pw)
-    x_frac = max(0.0, min(1.0, (x - wl) / span))
-    floor_gap = max(0, round((wt + wh - ph) - y))
-    return x_frac, floor_gap
-
-
-def frac_to_position(
-    x_frac: float, floor_gap: int, pet: tuple[int, int], work: tuple[int, int, int, int]
-) -> tuple[float, float]:
-    """(fraction horizontale, écart au sol) -> position absolue."""
-    pw, ph = pet
-    wl, wt, ww, wh = work
-    x = float(wl + max(0.0, min(1.0, x_frac)) * max(0, ww - pw))
-    y = float(wt + wh - ph - max(0, floor_gap))
-    return x, y
-
-
-def choose_monitor(monitors: list, wanted_key: str):
-    """Choisit le moniteur d'affichage : le mémorisé, sinon l'écran principal.
-
-    C'est le cas du portable dont on débranche l'écran externe (CDC §6) : la clé
-    mémorisée ne correspond plus à rien, et le pet doit réapparaître sur l'écran
-    principal plutôt que dans des coordonnées qui ne sont plus affichées.
-
-    Retourne `(moniteur, replié)`, où `replié` dit si le moniteur mémorisé
-    manquait — l'appelant s'en sert pour journaliser, et pour décider s'il faut
-    reprendre la position mémorisée ou repartir d'un placement par défaut.
-    """
-    if not monitors:
-        raise ValueError("aucun moniteur actif")
-    for m in monitors:
-        if m.key == wanted_key:
-            return m, False
-    primary = next((m for m in monitors if m.primary), monitors[0])
-    return primary, bool(wanted_key)
-
-
-def floor_y(work: tuple[int, int, int, int], ph: int) -> float:
-    """Ordonnée du pet posé sur le bord bas de la zone de travail."""
-    _, wt, _, wh = work
-    return float(wt + wh - ph)
-
-
-class CuriousGaze:
-    """Coups d'oeil du pet vers un point de son choix.
-
-    « Comme s'il tentait d'amener l'utilisateur sur autre chose. » C'est la
-    seule cible du regard qui ne vienne de rien d'observable : elle est
-    **inventée** par le pet, et c'est précisément ce qui la rend vivante. Un
-    regard qui ne fait que suivre des choses existantes reste réactif ; un
-    regard qui part de lui-même vers un coin de l'écran suggère une intention.
-
-    Le hasard vient d'une graine, comme le rythme des clignements du lot L4 : le
-    tempérament d'attention appartient à l'identité du robot, et reste
-    reproductible en test.
-    """
-
-    def __init__(self, seed: int = 0) -> None:
-        import random
-        self._rng = random.Random(seed)
-        self.point: tuple[float, float] | None = None
-        self._left = self._rng.uniform(*GLANCE_GAP)
-
-    def update(self, dt: float, curious: bool, work, pet_x: float,
-               pet_w: float) -> tuple[float, float] | None:
-        """Avance l'horloge des coups d'oeil et rend le point visé, ou None."""
-        self._left -= max(0.0, dt)
-        if self._left > 0.0:
-            return self.point
-
-        if self.point is not None:
-            # Fin du coup d'oeil : retour au régime normal.
-            self.point = None
-            self._left = self._rng.uniform(*GLANCE_GAP)
-            return None
-
-        if not curious:
-            # Pas curieux : on repousse sans consommer le tour, sinon le
-            # premier instant de curiosité déclencherait un coup d'oeil immédiat.
-            self._left = self._rng.uniform(*GLANCE_GAP) * 0.5
-            return None
-
-        wl, wt, ww, wh = work
-        mini = GLANCE_MIN_DISTANCE * max(1.0, pet_w)
-        for _ in range(8):
-            x = self._rng.uniform(wl, wl + ww)
-            if abs(x - pet_x) >= mini:
-                break
-        else:
-            x = wl if pet_x > wl + ww / 2.0 else wl + ww
-        # Dans la moitié haute : regarder le sol ne raconte rien, alors qu'un
-        # regard levé suggère qu'il a vu quelque chose.
-        y = self._rng.uniform(wt + wh * 0.12, wt + wh * 0.55)
-        self.point = (x, y)
-        self._left = self._rng.uniform(*GLANCE_HOLD)
-        return self.point
-
-
-class PetWindow(QWidget):
+class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
+                DiagnosticsMixin, QWidget):
     """Fenêtre du pet."""
 
     # La sortie est décidée par le bootstrap, pas par la fenêtre : une fenêtre
@@ -390,7 +235,11 @@ class PetWindow(QWidget):
 
         self._yaw = 0.0
         self._frame_no = 0
-        self._pulse = 0.0                           # réaction au clic
+        # Poids du robot : encaissement, rebond, étirement en vol (lot L10).
+        # Remplace un `_pulse` qui décroissait d'un facteur fixe **par image**,
+        # donc trois fois plus lentement en temps réel à 10 fps qu'à 30 : le pet
+        # réagissait au clic d'autant plus mollement qu'il était occupé.
+        self._impact = Impact()
         self._t0 = time.perf_counter()
         self._t_last = self._t0
 
@@ -737,7 +586,7 @@ class PetWindow(QWidget):
         self._t_last = now                      # pas téléporter le pet
         t = now - self._t0
 
-        self._pulse *= 0.88                     # retour élastique du clic
+        self._impact.step(dt)
         self._step_fall(dt, ph)
         self._look_point = self._look_target(dt, pw)
         self._step_intro(dt)
@@ -752,8 +601,14 @@ class PetWindow(QWidget):
         # Le robot ne tourne plus sur lui-même : c'est l'animation qui l'oriente
         # désormais, et la caméra reste fixe.
         if self.animator is not None:
-            self.animator.update(dt, self._anim_context(pw, ph),
-                                 extra=self._loco_channels)
+            # Les canaux d'impact **s'ajoutent** à ceux de la locomotion, ils
+            # ne les remplacent pas : les deux écrivent `body.flex`, et un saut
+            # qui atterrit doit cumuler son écrasement de démarche et son
+            # encaissement de choc.
+            extra = dict(self._loco_channels)
+            for nom, valeur in self._impact.channels().items():
+                extra[nom] = extra.get(nom, 0.0) + valeur
+            self.animator.update(dt, self._anim_context(pw, ph), extra=extra)
             self.scene.face_state = self.animator.face
 
         # Cadence : sollicitée par ce que le pet **fait**, et non plus seulement
@@ -765,8 +620,12 @@ class PetWindow(QWidget):
         lift = max(0.0, floor_y(mon.work, ph) - self._y) / max(1.0, ph)
 
         self.rc.begin()
+        # L'échelle globale reste à 1 : la réaction au clic passe désormais
+        # par `body.flex`, donc par le rig. Un agrandissement uniforme du robot
+        # entier grossissait aussi sa tête et son contour — ce n'était pas une
+        # réaction, c'était un zoom.
         self.scene.draw(yaw=self._yaw, pitch=0.16,
-                        scale=1.0 + 0.12 * self._pulse, time_s=t, lift=lift)
+                        scale=1.0, time_s=t, lift=lift)
         frame = self.rc.read_rgba()
 
         # Le tableau doit rester vivant tant que la QImage l'utilise : QImage ne
@@ -831,12 +690,26 @@ class PetWindow(QWidget):
             self._x += self._vx * dt
             self._vx -= self._vx * min(1.0, FALL_DRAG * dt)
 
+        # Étirement en vol : le corps s'allonge dans l'axe de son mouvement,
+        # et cesse de s'allonger dès qu'il ralentit. Posé avant le test du sol
+        # pour que la dernière image de chute soit encore étirée — c'est le
+        # contraste avec l'écrasement qui suit qui donne le choc.
+        self._impact.set_flight(self._vy)
+
         if self._y >= floor:
             self._y = floor
+            arrivee = abs(self._vy)
+            force = self._impact.land(arrivee)
+            if force:
+                # Le fait, pas l'effet : c'est de là que partiront la poussière
+                # du lot Particules et le son du lot Sons, chacun dosé par la
+                # même force.
+                bus.emit("atterri", force=force, vitesse=arrivee)
             if abs(self._vy) < REST_VELOCITY:
                 self._vy = 0.0
                 self._vx = 0.0
                 self._falling = False
+                self._impact.set_flight(0.0)
                 self._settle_home()
             else:
                 self._vy = -self._vy * RESTITUTION
@@ -875,180 +748,6 @@ class PetWindow(QWidget):
             self._x = loco.window_x
             self._y = loco.window_y
             self._apply_position()
-
-    # -- comportement (lot L6) -----------------------------------------------
-
-    def _tick_brain(self, now: float) -> None:
-        """Un tick de comportement, à 250 ms comme le §12 l'impose.
-
-        Branché sur le timer des capteurs plutôt que sur un timer dédié : les
-        deux tournent à 4 Hz et le second aurait besoin exactement des données
-        que le premier vient de produire. Un troisième réveil coûterait de
-        l'autonomie sans rien apporter (§3).
-
-        Appelé **avant** toute sortie anticipée de `_on_system_check` : les
-        besoins doivent continuer à s'écouler pendant qu'une vidéo plein écran
-        masque le pet, sinon deux heures de film ne compteraient pas.
-        """
-        dt = 0.0 if self._brain_tick <= 0.0 else max(0.0, now - self._brain_tick)
-        self._brain_tick = now
-        if dt <= 0.0:
-            return
-
-        left, top, pw, ph = self._pet_rect()
-        loco = self.locomotion
-        self._me.x = self._x + pw / 2.0
-        self._me.y = self._y
-        # Hauteur du **corps** et non de la fenêtre : les deux coïncident au lot
-        # L6 phase A, mais le bandeau de la bulle les séparera (phase B) et les
-        # scores de distance se lisent en hauteurs de corps.
-        self._me.pet_h = float(ph)
-        self._me.travelling = bool(loco is not None and loco.travelling)
-        self._me.home_x = float(loco.home_x) if loco is not None else self._me.x
-        self._me.span = loco.terrain.span if loco is not None else (0.0, 0.0)
-        if self.item_pending and self.item.state not in ("consumed", "expiring"):
-            self._me.item_x = self.item.center(pw / max(1, self.width()))[0]
-        else:
-            self._me.item_x = None
-
-        plan = self.session.update(dt, self.sensors.context, self._me)
-        if plan.action != self._last_action:
-            self._last_action = plan.action
-            self._apply_plan(plan, pw)
-        self._plan = plan
-        if self.animator is not None:
-            self.animator.set_mood(self.brain.expression)
-
-    def _apply_plan(self, plan: Plan, pw: int) -> None:
-        """Traduit un plan symbolique en courbe et en cible de déplacement.
-
-        C'est **le seul** endroit qui connaisse à la fois le vocabulaire du
-        `brain` et celui de `anim` et de la locomotion. Un nom inconnu y est
-        ignoré, jamais rejeté : le `brain` doit pouvoir gagner une action sans
-        que la fenêtre refuse de démarrer.
-        """
-        if self.animator is not None:
-            if plan.curve:
-                self.animator.play(plan.curve)
-            else:
-                self.animator.stop_action()
-
-        loco = self.locomotion
-        if loco is None:
-            return
-
-        if plan.travel == "stop":
-            loco.stop()
-        elif plan.travel == "wander":
-            loco.wander()
-        elif plan.travel == "home":
-            loco.go_home()
-        elif plan.travel == "cursor":
-            cx = float(self.sensors.cursor.position[0])
-            gap = FOLLOW_GAP * pw
-            # On s'arrête du côté d'où l'on vient, pour ne pas traverser le
-            # curseur et le regarder de l'autre bord.
-            target = cx - gap if cx > self._me.x else cx + gap
-            loco.go_to(target)
-        elif plan.travel == "item":
-            if self.item is not None and not self.item.gone:
-                dpr = pw / max(1, self.width())
-                cible = self.item.center(dpr)[0]
-                # On s'arrête **sur** l'objet et non à côté : c'est le contact
-                # qui déclenche, contrairement au suivi du curseur.
-                loco.go_to(cible)
-        elif plan.travel == "edge":
-            # Le bord de **son écran**, et non du terrain.
-            #
-            # Le §12 dit « fouine près du bord de l'écran », au singulier, et
-            # j'avais implémenté le bord de la bande praticable — c'est-à-dire,
-            # sur un montage à trois moniteurs, une traversée de 5 540 px.
-            # Mesuré avant correctif : 3 532 px de trajet médian pour cette
-            # seule action, contre 379 pour la flânerie. Suivie du retour au
-            # domicile, elle donnait le va-et-vient interminable que des
-            # utilisateurs ont signalé.
-            #
-            # La cible reste bornée par le terrain : un écran peut déborder de
-            # la bande praticable à ses extrémités.
-            work = self.current_monitor().work
-            low = float(work[0])
-            high = float(work[0] + work[2])
-            inset = EDGE_INSET * pw
-            middle = 0.5 * (low + high)
-            cible = low + inset if self._me.x > middle else high - inset
-            loco.go_to(loco.terrain.clamp_x(cible))
-
-    def _step_bubble(self, dt: float, now: float) -> None:
-        """Avance l'apparition de la bulle et l'affichage par les yeux.
-
-        Appelée par le rendu et non par le tick de comportement : à 4 Hz, un
-        fondu de 0,45 s se verrait par paliers.
-        """
-        # La bulle se taît quand le pet dort ou qu'on le tient : il ne peut pas
-        # demander à manger les yeux fermés, et une bulle qui suit un glisser
-        # est du bruit.
-        muet = (self._dragging or self._falling
-                or not self._plan.look_at_cursor)
-        if self._onboarding:
-            # Pendant le baptême, la bulle porte un point d'interrogation et
-            # rien d'autre : un robot qui réclamerait à manger avant d'avoir un
-            # nom mettrait deux demandes en concurrence.
-            #
-            # Elle n'arrive qu'**à la fin** de la scène d'arrivée, et se retire
-            # dès que la saisie est ouverte : une bulle qui demande encore alors
-            # qu'on est en train de répondre est du bruit.
-            prete = self._intro_phase == "asking"
-            saisie = (self.panel is not None and self.panel.isVisible()
-                      and self.panel.page == "name")
-            want = "" if muet or not prete or saisie else "question"
-        else:
-            want = "" if muet else self.brain.needs.want()
-        if want != self._bubble_want:
-            self._bubble_want = want
-            if want:
-                # Nouveau besoin : on repart d'un affichage propre.
-                self._eye_left_seconds = 0.0
-
-        cible = 1.0 if self._bubble_want else 0.0
-        # L'opacité reste un fondu : un fondu n'est pas un mouvement, et une
-        # opacité qui dépasse serait écrêtée sans rien donner à voir.
-        tau = BUBBLE_FADE_IN if cible > self._bubble_opacity else BUBBLE_FADE_OUT
-        self._bubble_opacity += (cible - self._bubble_opacity) * min(
-            1.0, dt / max(1e-3, tau))
-        self._bubble_scale.zeta = (BUBBLE_POP_ZETA if cible > 0.0
-                                   else BUBBLE_CLOSE_ZETA)
-        self._bubble_scale.step(cible, dt)
-
-        scene = self.scene
-        if scene is None:
-            return
-        scene.bubble_glyph = glyph_id(
-            "question" if self._bubble_want == "question"
-            else GLYPH_FOR_NEED.get(self._bubble_want, ""))
-        scene.bubble_opacity = self._bubble_opacity
-        scene.bubble_scale = max(0.0, float(self._bubble_scale.value))
-        scene.bubble_pulse = 0.5 + 0.5 * math.sin(
-            now * 2.0 * math.pi / BUBBLE_PULSE_PERIOD)
-
-        # Afficheur : décompte, puis fondu de retour vers les pupilles.
-        self._eye_left_seconds = max(0.0, self._eye_left_seconds - dt)
-        cible = 1.0 if self._eye_left_seconds > 0.0 else 0.0
-        self._eye_mix += (cible - self._eye_mix) * min(1.0, dt / EYE_FADE)
-        scene.eye_glyphs = (self._eye_left, self._eye_right)
-        scene.eye_glyph_mix = self._eye_mix
-
-    def show_in_eyes(self, left: str, right: str,
-                     seconds: float = EYE_SHOW_SECONDS) -> None:
-        """Affiche deux sigles à la place des pupilles.
-
-        « C'est par ses yeux qu'on affichera ce qu'il souhaite dire à
-        l'utilisateur. » Point d'entrée unique, utilisé par le clic sur la bulle
-        et par le baptême du premier lancement.
-        """
-        self._eye_left = glyph_id(left)
-        self._eye_right = glyph_id(right)
-        self._eye_left_seconds = max(0.0, float(seconds))
-        self.clock.poke()
 
     # -- cadence (correctif d'après-lot L6) ----------------------------------
 
@@ -1105,457 +804,13 @@ class PetWindow(QWidget):
             return True
         if 0.01 < self._eye_mix < 0.99:
             return True
+        # Un encaissement en cours ne déplace pas la fenêtre — il déforme le
+        # corps sur place. Sans cette ligne, le rebond d'un atterrissage se
+        # jouerait à 10 fps, c'est-à-dire par paliers, juste après la chute qui,
+        # elle, tournait à 30.
+        if not self._impact.settled:
+            return True
         return False
-
-    # -- objets de soin ------------------------------------------------------
-
-    @property
-    def item_pending(self) -> bool:
-        return self.item is not None and not self.item.gone
-
-    def _spawn_item(self, kind: str) -> bool:
-        """Fait apparaître un objet de soin au sol, près du pet.
-
-        Le délai du soin est posé **ici**, à l'apparition, et non à la
-        consommation : sans cela rien n'empêcherait de semer dix gamelles. S'il
-        n'est jamais rejoint, l'objet s'évapore et le délai est remboursé — le
-        §12 interdit de punir.
-        """
-        if self.item_pending or not self.session.start_care(kind):
-            return False
-
-        _, _, pw, ph = self._pet_rect()
-        dpr = pw / max(1, self.width())
-        cote_logique = max(24, int(round(SIZE_RATIO * ph / dpr)))
-        cote_physique = cote_logique * dpr
-
-        item = ItemWindow(kind, self._picker.pick(kind), cote_logique)
-        mon = self.current_monitor()
-        sol = floor_y(mon.work, int(cote_physique))
-
-        # Côté choisi sur la place disponible, distance tirée dans la fourchette.
-        wl, _, ww, _ = mon.work
-        centre = self._x + pw / 2.0
-        ecart = self._picker._rng.uniform(ITEM_SPAWN_MIN, ITEM_SPAWN_MAX) * pw
-        cible = centre + (-ecart if centre > wl + ww / 2.0 else ecart)
-        cible = max(float(wl), min(float(wl + ww - cote_physique), cible))
-
-        item.show()
-        item.place(cible - cote_physique / 2.0,
-                   sol - ITEM_DROP_HEIGHT * cote_physique)
-        self.item = item
-        self._sync_panel_items()
-        self.clock.poke()
-        log.info("objet de soin : %s", kind)
-        if self.diag:
-            print(f"[diag] objet {kind} en x={cible:.0f}", flush=True)
-        return True
-
-    def _step_item(self, dt: float) -> None:
-        """Avance l'objet, et déclenche le soin quand les deux se rejoignent.
-
-        **Un seul test pour les trois façons de les réunir** : que le robot y
-        soit allé, qu'on l'y ait porté, ou qu'on ait traîné l'objet jusqu'à lui,
-        c'est la même distance entre les deux centres qui décide.
-        """
-        item = self.item
-        if item is None:
-            return
-        if item.gone:
-            self.item = None
-            self._sync_panel_items()
-            return
-
-        _, _, pw, ph = self._pet_rect()
-        dpr = pw / max(1, self.width())
-        sol = floor_y(self.current_monitor().work, int(item.side * dpr))
-
-        if item.state == "expiring":
-            if item.expire_step(dt):
-                if item.gone:
-                    # Jamais rejoint : on rend le délai plutôt que de le faire
-                    # payer, et le bouton redevient disponible.
-                    self.session.refund_care(item.kind)
-                    log.info("objet %s évaporé, délai rendu", item.kind)
-            return
-
-        item.step(dt, sol)
-
-        if item.eaten or item.state in ("consumed", "expiring"):
-            return
-
-        ix, iy = item.center(dpr)
-        px = self._x + pw / 2.0
-        py = self._y + ph / 2.0
-        if math.hypot(ix - px, iy - py) <= REACH * pw:
-            self._consume_item(item)
-
-    def _consume_item(self, item: ItemWindow) -> None:
-        if not item.consume():
-            return
-        applied = self.session.deliver_care(item.kind)
-        if applied:
-            self._celebrate_care(item.kind, applied)
-        if self.locomotion is not None:
-            self.locomotion.stop()
-
-    def _sync_panel_items(self) -> None:
-        """Tient le panneau au courant : un soin par objet n'est offert que
-        si le bureau est libre. Le panneau ne surveille rien de lui-même —
-        c'est la fenêtre qui a la boucle de rendu."""
-        panel = self.panel
-        if panel is None:
-            return
-        if panel.item_pending != self.item_pending:
-            panel.item_pending = self.item_pending
-            panel.update()
-
-    def _close_item(self) -> None:
-        if self.item is not None:
-            self.item.close()
-            self.item = None
-
-    # -- premier lancement (lot L6 phase B) ----------------------------------
-
-    def begin_onboarding(self) -> None:
-        """Le robot est neuf et sans nom : il attend dans son carton."""
-        self._onboarding = True
-
-    def emerge_at(self, center_x: float, floor_y: float) -> None:
-        """Le robot **bondit** hors du carton, à cette position physique.
-
-        Il ne tombe pas, il saute de côté. La nuance compte : le carton part en
-        fondu, et sans élan propre le robot aurait l'air d'avoir été découvert
-        là plutôt que d'être sorti tout seul. Un bond latéral raconte l'inverse,
-        et il ne coûte qu'une vitesse horizontale sur la chute du lot L1.
-
-        Le côté est choisi sur la **place disponible** et non tiré au hasard :
-        sauter dans le bord de l'écran pour s'y écraser aussitôt ne serait pas
-        une sortie triomphale.
-        """
-        _, _, pw, ph = self._pet_rect()
-        self._x = float(center_x) - pw / 2.0
-        self._y = float(floor_y) - ph
-
-        mon = self.current_monitor()
-        wl, _, ww, _ = mon.work
-        centre_ecran = wl + ww / 2.0
-        cote = -1.0 if center_x > centre_ecran else 1.0
-
-        self._apply_position()
-        self.show()
-        self._falling = True
-        self._vx = cote * LEAP_VX
-        self._vy = LEAP_VY
-        if self.animator is not None:
-            self.animator.play("celebrate")
-        self._intro_phase = "emerging"
-        self._intro_t = 0.0
-        self._settle_home()
-        self.clock.poke()
-
-    def _step_intro(self, dt: float) -> None:
-        """Avance la petite scène d'arrivée, une phase à la fois.
-
-        Écrite comme une suite d'états plutôt qu'en minuteries enchaînées :
-        chaque phase sait ce qui la termine, donc l'ensemble se relit comme le
-        scénario qu'il est — il sort, il se repère, il vous voit, il demande.
-        """
-        if not self._intro_phase:
-            return
-        self._intro_t += dt
-
-        if self._intro_phase == "emerging":
-            # Le bond finit quand il a touché le sol, plus un temps de pose :
-            # enchaîner sur l'atterrissage même donnerait une scène pressée.
-            if not self._falling and self._intro_t > SETTLE_SECONDS:
-                self._enter_intro("looking")
-            return
-
-        if self._intro_phase == "looking":
-            if self._intro_t >= LOOK_SECONDS:
-                self._enter_intro("surprised")
-            return
-
-        if self._intro_phase == "surprised":
-            if self._intro_t >= SURPRISE_SECONDS:
-                # « asking » n'a pas de fin : c'est la bulle qui prend le
-                # relais, et elle attend un clic.
-                self._enter_intro("asking")
-
-    def _enter_intro(self, phase: str) -> None:
-        self._intro_phase = phase
-        self._intro_t = 0.0
-        if self.animator is None:
-            return
-        if phase == "looking":
-            # Balayage de gauche à droite : la courbe du lot L4 fait
-            # exactement ça, et le suivi du curseur est coupé le temps qu'elle
-            # joue (cf. INTRO_SCRIPTED).
-            self.animator.play("look_around")
-        elif phase == "surprised":
-            # Il regarde droit devant — le suivi est toujours coupé, donc la
-            # tête revient d'elle-même au centre — et sursaute. Le sursaut est
-            # un vrai saut, pas une pose : la chute du lot L1 le redescend.
-            self.animator.play("poke_reaction")
-            self.animator.set_mood("surpris")
-            self._falling = True
-            self._vx = 0.0
-            self._vy = SURPRISE_VY
-        self.clock.poke()
-
-    def ask_for_name(self) -> None:
-        """Ouvre la saisie du nom, après l'avoir annoncée par les yeux.
-
-        L'ordre est celui demandé : d'abord les deux sigles à la place des
-        pupilles — un robot et un point d'interrogation, « qui suis-je » —, puis
-        le champ de saisie.
-        """
-        self.show_in_eyes("robot", "question", seconds=3.4)
-        panel = self._ensure_panel()
-        panel.open_page("name")
-        self.place_panel()
-        panel.open_panel()
-
-    # -- panneau de soin (lot L6 phase B) ------------------------------------
-
-    @property
-    def panel_open(self) -> bool:
-        return (self.panel is not None and self.panel.isVisible()
-                and not self.panel.closing)
-
-    def _ensure_panel(self) -> CarePanel:
-        if self.panel is None:
-            self.panel = CarePanel(self.session, self.genome)
-            self.panel.care_requested.connect(self._on_care)
-            self.panel.quit_requested.connect(self.quit_requested.emit)
-            self.panel.name_submitted.connect(self._on_name)
-            self.panel.appearance_chosen.connect(self._on_appearance)
-            self.panel.item_chosen.connect(self._on_cosmetic)
-            self.panel.reset_requested.connect(self._on_reset)
-            self.panel.autostart_toggled.connect(self._on_autostart)
-            self.panel.item_preview = self.cosmetic_preview
-        return self.panel
-
-    def toggle_panel(self) -> None:
-        # Tant que le robot n'a pas de nom, le clic droit ne donne rien : le
-        # menu de soin parlerait d'un pet qu'on n'a pas encore accueilli, et il
-        # détournerait de la seule chose à faire — le baptiser.
-        if self._onboarding:
-            return
-        if self.panel_open:
-            self.panel.close_panel()
-            return
-        panel = self._ensure_panel()
-        panel.item_pending = self.item_pending
-        panel.open_page("menu")
-        self.place_panel()
-        panel.open_panel()
-        # Le pet cesse de flâner tant qu'on s'occupe de lui : un panneau qui
-        # court après un robot en mouvement serait illisible, et rester tranquille
-        # quand on le regarde est de toute façon ce qu'il ferait.
-        self.clock.poke()
-
-    def place_panel(self) -> None:
-        """Centre le panneau au-dessus de la tête du pet.
-
-        **Seul point du projet qui franchit la frontière des deux espaces de
-        coordonnées.** Le pet vit en pixels physiques de bout en bout ; le
-        panneau est un widget Qt ordinaire, donc en pixels logiques. La
-        conversion se fait ici, une fois, par le rapport mesuré entre les deux.
-        """
-        panel = self.panel
-        if panel is None:
-            return
-        _, _, pw, ph = self._pet_rect()
-        dpr = pw / max(1, self.width())
-        # Le haut du pet visible n'est pas le haut de la fenêtre : le bandeau de
-        # la bulle est transparent, et le panneau doit se poser sur la tête.
-        bandeau = ph * self.scene.headroom if self.scene is not None else 0.0
-        haut_logique = (self._y + bandeau) / dpr
-        cx = (self._x + pw / 2.0) / dpr
-        panel.move(int(cx - panel.width() / 2.0),
-                   int(haut_logique - panel.height() - PANEL_GAP))
-
-    def _on_care(self, kind: str) -> None:
-        """Un bouton de soin a été pressé.
-
-        Deux chemins, et c'est la seule branche du mécanisme : la caresse agit
-        tout de suite, les trois autres **font apparaître un objet** et
-        n'agissent qu'une fois le robot et l'objet réunis.
-        """
-        if kind in ITEM_KINDS:
-            self._spawn_item(kind)
-            return
-        applied = self.session.care(kind)
-        if not applied:
-            return
-        self._celebrate_care(kind, applied)
-
-    def _celebrate_care(self, kind: str, applied: dict) -> None:
-        # Token versé ici, c'est-à-dire à la **livraison** du soin et non au
-        # clic du bouton (§14). Depuis que trois soins sur quatre passent par un
-        # objet posé sur le bureau, créditer au bouton laisserait faire
-        # apparaître dix gamelles sans jamais en livrer une.
-        gagne = self.session.award_tokens()
-
-        # Le `brain` élira `happy_bounce` au prochain tick ; la courbe est jouée
-        # tout de suite, pour que le geste ait une réponse immédiate.
-        if self.animator is not None:
-            self.animator.play("celebrate")
-        besoin = max(applied, key=lambda k: abs(applied[k]))
-        self.show_in_eyes(besoin, besoin, seconds=1.6)
-        self.clock.poke()
-        if self.panel is not None:
-            self.panel.update()
-        if self.diag:
-            print(f"[diag] token +{gagne} -> {self.session.tokens}", flush=True)
-        if self.diag:
-            print(f"[diag] soin {kind} -> {applied}", flush=True)
-
-    def _on_appearance(self, param: str, value: str) -> None:
-        """Applique un choix de couleur, et le montre tout de suite.
-
-        Le robot est **reconstruit** plutôt que recoloré à chaud. La couleur du
-        corps et l'accent traversent la géométrie — teinte des parties, couleur
-        des pupilles, configuration de la passe toon — et les retoucher une par
-        une reviendrait à recopier `build`. Elle coûte 7 ms mesurées, une fois
-        par clic : c'est gratuit à cette échelle.
-        """
-        if not self.session.set_appearance(param, value):
-            return
-        self._rebuild_robot()
-        log.info("apparence : %s = %s", param, value)
-
-    def _on_cosmetic(self, slot: str, key: str) -> None:
-        """Un article a été touché : on l'achète, ou on le porte.
-
-        **Un seul geste pour les deux**, et c'est volontaire : appuyer sur un
-        article qu'on ne possède pas l'achète et le met aussitôt, appuyer sur un
-        article possédé le porte. Séparer « acheter » de « porter » aurait
-        demandé deux boutons par vignette, donc deux pictogrammes de plus à
-        distinguer pour rien.
-        """
-        from ..geometry.cosmetics import NONE
-
-        if key != NONE and not self.session.owns(key):
-            if not self.session.buy(key):
-                return
-            if self.diag:
-                print(f"[diag] achat {key} -> solde {self.session.tokens}",
-                      flush=True)
-        if not self.session.wear(slot, key):
-            return
-        self._rebuild_robot()
-        if self.panel is not None:
-            self.panel.update()
-        log.info("%s : %s", slot, key or "aucun")
-
-    def _on_autostart(self) -> None:
-        """Bascule le lancement au démarrage (§13)."""
-        actif = not win32.autostart_enabled()
-        if win32.set_autostart(actif):
-            log.info("lancement au démarrage : %s", "oui" if actif else "non")
-        if self.panel is not None:
-            self.panel.update()
-
-    def _on_reset(self) -> None:
-        """Purge tout et quitte. Le §13 demande un bouton, le voici.
-
-        **Tout** : besoins, nom, génome, tokens, inventaire, réglages. Une
-        réinitialisation partielle n'en serait pas une, et le §13 parle de purge
-        des données. L'application se ferme derrière : recréer un robot dans une
-        session qui porte encore l'ancien en mémoire serait une source de bugs
-        pour un geste qui arrive une fois dans la vie du produit.
-        """
-        from ..state import save
-
-        if self.panel is not None:
-            # Sans animation : la session que le panneau peint est sur le point
-            # d'être effacée, et le regarder se fermer joliment en lisant des
-            # données à demi réinitialisées n'a rien de gracieux.
-            self.panel.close_panel(immediat=True)
-        log.info("réinitialisation demandée")
-        try:
-            self.session.flush(force=False)
-        except OSError:
-            pass
-        self._purge_on_exit = True
-        self.quit_requested.emit()
-
-    def _rebuild_robot(self) -> None:
-        """Reconstruit le robot avec son costume courant, et le réanime.
-
-        Partagé par le changement de couleur et celui de chapeau : les deux
-        passent par `overrides`, donc ils ont exactement le même effet.
-        """
-        if self.scene is None:
-            return
-        self.robot = build(self.genome, self.session.appearance)
-        self.scene.set_robot(self.robot)
-        if self.animator is not None:
-            self.animator = Animator.for_robot(
-                self.robot, seed=int(self.genome.get("seed", 0)))
-        self._hat_previews.clear()
-        self.clock.poke()
-
-    def cosmetic_preview(self, slot: str, key: str):
-        """Aperçu d'un article, rendu **sur le robot de l'utilisateur**.
-
-        Rendu une fois puis gardé : huit vignettes coûtent huit reconstructions
-        de maillage, soit une soixantaine de millisecondes à l'ouverture du
-        rayon, et rien ensuite. Le cache est vidé dès que l'apparence change,
-        sinon les aperçus montreraient l'ancienne couleur.
-
-        Le robot réel est **remis en place** à la fin : la scène n'a qu'un
-        maillage à la fois, et le laisser sur le dernier chapeau essayé
-        remplacerait le pet à l'écran.
-        """
-        from PySide6.QtGui import QPixmap
-
-        if self.scene is None or self.robot is None:
-            return None
-        cache_key = slot + ":" + key
-        if cache_key in self._hat_previews:
-            return self._hat_previews[cache_key]
-
-        # Les **autres** emplacements gardent ce qui est porté : on montre le
-        # robot tel qu'il sera, pas l'article seul sur une tête nue.
-        costume = dict(self.session.appearance)
-        costume[slot] = key
-        try:
-            self.scene.set_robot(build(self.genome, costume))
-            self.rc.begin()
-            self.scene.draw(yaw=0.0, pitch=0.14)
-            px = self.rc.read_rgba()
-            image = QImage(px.data, px.shape[1], px.shape[0], px.shape[1] * 4,
-                           QImage.Format.Format_RGBA8888_Premultiplied).copy()
-        finally:
-            self.scene.set_robot(self.robot)
-        pixmap = QPixmap.fromImage(image)
-        self._hat_previews[cache_key] = pixmap
-        return pixmap
-
-    def _on_name(self, name: str) -> None:
-        accepte = self.session.set_name(name)
-
-        # Le baptême se termine dès que le robot **a** un nom, et non dès que
-        # celui-ci vient d'être accepté. La nuance est un garde-fou : un refus
-        # — nom déjà posé par une autre voie, par exemple — laissait sinon
-        # l'utilisateur sans menu contextuel, définitivement, sans rien pour
-        # s'en sortir.
-        if not self.session.name:
-            return
-        self._onboarding = False
-        self._intro_phase = ""
-        if not accepte:
-            return
-        if self.panel is not None:
-            self.panel.close_panel()
-        if self.animator is not None:
-            self.animator.play("celebrate")
-        self.show_in_eyes("robot", "robot", seconds=2.0)
-        log.info("robot baptisé")
 
     # -- hit-testing ---------------------------------------------------------
 
@@ -1677,7 +932,8 @@ class PetWindow(QWidget):
                 return
 
         self._clicks += 1
-        self._pulse = 1.0
+        self._impact.poke()
+        bus.emit("pousse")
         self._dragging = True
         # Le `brain` élit `react_to_poke`, qui rejouera la courbe par le plan.
         # Elle est lancée ici quand même : le tick n'arrive que 250 ms plus tard
@@ -1724,70 +980,6 @@ class PetWindow(QWidget):
             self._apply_position()
             self._settle_home()
         self.clock.poke()
-
-    # -- diagnostics ---------------------------------------------------------
-
-    def _on_diag(self) -> None:
-        fps = self._frames / 2.0
-        ms_render = 1000.0 * self._t_render / max(1, self._frames)
-        ms_paint = 1000.0 * self._t_paint / max(1, self._paints)
-        paints = self._paints
-        self._frames = self._paints = 0
-        self._t_render = self._t_paint = 0.0
-        fg = win32.get_foreground_window()
-        mon = self.current_monitor()
-        print(
-            f"[diag] {self.clock.regime.value:11s} {fps:4.1f} fps | "
-            f"CPU {self._cpu.sample():4.1f} % | rendu {ms_render:5.2f} ms | "
-            f"peint {paints // 2:2d}/s a {ms_paint:5.2f} ms | "
-            f"hit {1000 // max(1, self._hit_timer.interval()):2d} Hz | "
-            f"ct {int(win32.is_click_through(self.hwnd))} | "
-            f"pos ({round(self._x)},{round(self._y)}) ecran {mon.rect[0]},{mon.rect[1]} | "
-            f"focus vole {self._focus_stolen} | fg inchange {fg == self._foreground_at_start}",
-            flush=True,
-        )
-        # Comportement : besoins, action élue, et les trois meilleurs candidats
-        # avec leur score. Sans les scores, un choix surprenant est
-        # inexplicable — c'est la ligne qui sert à juger le réglage en vrai.
-        besoins = "  ".join(f"{k[:3]}={v:3.0f}"
-                            for k, v in self.brain.needs.as_dict().items())
-        tete = sorted(self.brain.candidates, key=lambda c: -c.total)[:3]
-        print(f"[diag] brain {self.brain.current:14s} depuis "
-              f"{self.brain.elapsed:5.1f}s | {besoins} "
-              f"| humeur {self.brain.expression:10s} "
-              f"| {self.brain.changes:3d} changements "
-              f"| regard {self._look_source:7s} "
-              f"| bulle {self._bubble_want or '-':8s} {self._bubble_opacity:.2f} "
-              f"yeux {self._eye_mix:.2f} "
-              f"| " + "  ".join(f"{c.name}:{c.total:.2f}" for c in tete),
-              flush=True)
-
-        if self.animator is not None:
-            st = self.animator.stats
-            ch = self.animator.channels
-            ctx = self.sensors.context
-            print(f"[diag] ctx   {ctx.state:9s} inactif={ctx.idle_seconds:6.1f} s "
-                  f"| avant-plan={ctx.foreground_category:8s} "
-                  f"plein_ecran={int(ctx.fullscreen)} "
-                  f"| media={int(ctx.media_playing)} ({ctx.media_category}, "
-                  f"{ctx.media_seconds:5.1f} s) "
-                  f"| curseur {ctx.cursor_speed:7.1f} px/s "
-                  f"immobile {ctx.cursor_still_seconds:5.1f} s",
-                  flush=True)
-            if self.locomotion is not None:
-                lo = self.locomotion
-                cible = f"{lo.target_x:7.0f}" if lo.travelling else "   -   "
-                print(f"[diag] loco  x={lo.x:7.0f} cible={cible} "
-                      f"domicile={lo.home_x:7.0f} sol={lo.floor_y:6.0f} "
-                      f"arc={lo.arc:5.1f} sauts={lo.hops:3d} "
-                      f"demarche={lo.gait} repos={lo.cooldown:4.1f}s",
-                      flush=True)
-            print(f"[diag] anim  clignements={st.blinks:3d} saccades={st.saccades:3d} "
-                  f"actions={st.actions:2d} | tete lacet={ch['head.yaw']:+.3f} "
-                  f"tangage={ch['head.pitch']:+.3f} | corps lacet={ch['body.yaw']:+.3f} "
-                  f"| respiration={ch['body.flex']:+.4f} "
-                  f"| interet={self.animator.look.interest:.2f}",
-                  flush=True)
 
     def shutdown(self) -> None:
         self._close_item()
