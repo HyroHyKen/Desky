@@ -1577,17 +1577,19 @@ class LandingTest(unittest.TestCase):
             w.shutdown()
 
 
-class ParticleHitTestTest(unittest.TestCase):
-    """Les particules ne doivent pas rendre la fenêtre cliquable (CDC §6).
+class ParticleLayerTest(unittest.TestCase):
+    """Les particules vivent dans leur propre calque (CDC §6, lot L11).
 
-    C'est la contrainte qui a décidé de toute l'architecture du lot L11. Le
-    hit-testing lit l'alpha de l'image **rendue** : une étincelle dessinée dans
-    le FBO deviendrait une surface d'interception, et les clics destinés à la
-    fenêtre du dessous seraient avalés par de la poussière. D'où la peinture par
-    `QPainter` par-dessus la QImage, qui ne touche jamais cet alpha.
+    Elles étaient d'abord peintes dans la fenêtre du pet. Deux défauts que seul
+    l'usage révèle, et que ces tests gardent :
 
-    Le défaut serait invisible en regardant l'écran et très pénible à
-    diagnostiquer : « parfois mes clics ne passent pas ».
+    - **elles suivaient ses rebonds**, parce que leurs coordonnées étaient
+      celles d'un widget qui se déplace à chaque image ;
+    - **elles étaient coupées en bas**, les pieds du robot touchant le bord
+      inférieur de sa fenêtre à trois pixels près.
+
+    S'y ajoute la contrainte qui avait décidé de l'architecture : rien de tout
+    cela ne doit rendre quoi que ce soit cliquable.
     """
 
     @classmethod
@@ -1598,76 +1600,118 @@ class ParticleHitTestTest(unittest.TestCase):
     tearDown = BubblePopTest.tearDown
     _window = BubblePopTest._window
 
-    def _peint(self, w):
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QImage
+    def test_les_particules_ne_suivent_pas_le_robot(self) -> None:
+        """Le grief d'usage, dans sa forme la plus nue.
 
-        image = QImage(w.width(), w.height(),
-                       QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(Qt.GlobalColor.transparent)
-        w.render(image)
-        return image
-
-    def test_une_gerbe_n_agrandit_pas_la_zone_cliquable(self) -> None:
+        Une poussière est retombée quelque part. Le robot qui rebondit à côté
+        n'a aucune raison de l'emmener avec lui.
+        """
         import numpy as np
         from pet.ui import sparks
 
         w = self._window()
         try:
-            w._on_render()
-            avant_bbox = w._bbox
-            avant_alpha = w._alpha.copy()
+            calque = w._ensure_dust()
+            sparks.landing_dust(calque.banc, 1.0, w._pet_rect())
+            avant = calque.banc.x.copy(), calque.banc.y.copy()
 
-            sparks.care_sparks(w._particles, w.width(), w.height())
-            sparks.landing_dust(w._particles, 1.0, w.width(), w.height())
-            self.assertGreater(w._particles.count, 10, "aucune particule émise")
+            # Le robot fait un bond de côté et remonte, comme à l'atterrissage.
+            w._x += 40.0
+            w._y -= 25.0
+            w._apply_position()
+            w._step_particles(0.0)
 
-            # **Pas de second `_on_render` entre les deux mesures.** Le robot
-            # respire et cligne : un nouveau rendu changerait l'alpha pour des
-            # raisons qui n'ont rien à voir avec les particules, et le test
-            # échouerait en accusant le mauvais coupable.
-            self._peint(w)                      # déclenche paintEvent
-
-            self.assertEqual(w._bbox, avant_bbox,
-                             "la zone d'approche a enflé avec les particules")
-            self.assertTrue(np.array_equal(w._alpha, avant_alpha),
-                            "les particules sont entrées dans l'alpha du rendu")
-
-            # La conséquence, dite dans les termes de l'utilisateur : là où il
-            # n'y a qu'une particule, le clic doit continuer de passer.
-            idx, _ = w._particles.visible()
-            dpr = w._pet_rect()[2] / max(1, w.width())
-            dehors = 0
-            for k in idx:
-                px = int(w._particles.x[k] * dpr)
-                py = int(w._particles.y[k] * dpr)
-                if not (0 <= px < w._alpha.shape[1] and 0 <= py < w._alpha.shape[0]):
-                    continue
-                if w._alpha[py, px] == 0:
-                    dehors += 1
-            self.assertGreater(dehors, 0,
-                               "aucune particule hors silhouette : test aveugle")
+            self.assertTrue(np.array_equal(calque.banc.x, avant[0]))
+            self.assertTrue(np.array_equal(calque.banc.y, avant[1]))
         finally:
             w.shutdown()
 
-    def test_elles_sont_bien_peintes_pour_autant(self) -> None:
-        """Le pendant du test précédent : ne pas toucher l'alpha ne doit pas
-        vouloir dire ne rien dessiner."""
+    def test_le_calque_deborde_sous_les_pieds_et_sur_les_cotes(self) -> None:
+        """Il n'y a littéralement pas de place sous le robot dans sa propre
+        fenêtre : ses pieds en touchent le bord."""
+        w = self._window()
+        try:
+            calque = w._ensure_dust()
+            left, top, pw, ph = w._pet_rect()
+            ox, oy = calque._origin
+            dpr = pw / max(1, w.width())
+            largeur = calque.width() * dpr
+            hauteur = calque.height() * dpr
+
+            self.assertLess(ox, left, "le calque ne déborde pas à gauche")
+            self.assertGreater(ox + largeur, left + pw, "ni à droite")
+            self.assertGreater(oy + hauteur, top + ph,
+                               "le calque s'arrête aux pieds du robot")
+        finally:
+            w.shutdown()
+
+    def test_le_calque_ne_bouge_pas_sous_une_gerbe_en_cours(self) -> None:
+        """Une fenêtre qui glisse sous une gerbe vivante la rognerait par un
+        bord mouvant. Elle se replace entre deux effets, jamais pendant."""
+        from pet.ui import sparks
+
+        w = self._window()
+        try:
+            calque = w._ensure_dust()
+            sparks.landing_dust(calque.banc, 1.0, w._pet_rect())
+            origine = calque._origin
+
+            w._x += 120.0
+            w._apply_position()
+            w._ensure_dust()
+            self.assertEqual(calque._origin, origine)
+
+            calque.banc.clear()
+            w._ensure_dust()
+            self.assertNotEqual(calque._origin, origine,
+                                "le calque ne se replace jamais")
+        finally:
+            w.shutdown()
+
+    def test_le_calque_ne_recoit_aucun_clic(self) -> None:
+        """Posé une fois à la création et jamais levé : aucune branche ne peut
+        le retirer par mégarde. C'est la contrainte §6 rendue structurellement
+        impossible à enfreindre plutôt que seulement respectée."""
+        from PySide6.QtCore import Qt
+
+        w = self._window()
+        try:
+            calque = w._ensure_dust()
+            self.assertTrue(calque.testAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+        finally:
+            w.shutdown()
+
+    def test_une_gerbe_n_entre_pas_dans_l_alpha_du_pet(self) -> None:
+        """Le hit-testing lit cet alpha : une étincelle qui y figurerait
+        deviendrait une surface d'interception, et les clics destinés à la
+        fenêtre du dessous seraient avalés par de la poussière."""
+        import numpy as np
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
         from pet.ui import sparks
 
         w = self._window()
         try:
             w._on_render()
-            nu = self._peint(w)
-            sparks.care_sparks(w._particles, w.width(), w.height())
-            avec = self._peint(w)
-            self.assertNotEqual(nu, avec, "les particules ne se voient pas")
+            bbox, alpha = w._bbox, w._alpha.copy()
+
+            sparks.care_sparks(w._ensure_dust().banc, w._pet_rect())
+            self.assertGreater(w.dust.banc.count, 10)
+
+            image = QImage(w.width(), w.height(),
+                           QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            w.render(image)                      # déclenche le paintEvent du pet
+
+            self.assertEqual(w._bbox, bbox)
+            self.assertTrue(np.array_equal(w._alpha, alpha))
         finally:
             w.shutdown()
 
 
 class ParticleLifecycleTest(unittest.TestCase):
-    """Abonnements au bus : une fenêtre fermée ne doit plus y répondre."""
+    """Abonnements au bus, et cycle de vie du calque."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1682,10 +1726,25 @@ class ParticleLifecycleTest(unittest.TestCase):
 
         w = self._window()
         try:
-            w._particles.clear()
             bus.emit("atterri", force=0.9, vitesse=1100.0)
-            self.assertGreater(w._particles.count, 0,
-                               "le fait n'atteint pas les particules")
+            self.assertIsNotNone(w.dust, "le fait n'a créé aucun calque")
+            self.assertGreater(w.dust.banc.count, 0)
+        finally:
+            w.shutdown()
+
+    def test_le_calque_se_masque_quand_il_est_vide(self) -> None:
+        """Une fenêtre transparente de plus dans la pile ne coûte pas cher,
+        mais elle ne coûte rien du tout quand elle n'est pas là."""
+        from pet.feedback import bus
+
+        w = self._window()
+        try:
+            bus.emit("atterri", force=1.0, vitesse=1400.0)
+            self.assertTrue(w.dust.isVisible())
+            for _ in range(300):
+                w._step_particles(1.0 / 60.0)
+            self.assertTrue(w.dust.banc.empty)
+            self.assertFalse(w.dust.isVisible())
         finally:
             w.shutdown()
 
@@ -1699,9 +1758,8 @@ class ParticleLifecycleTest(unittest.TestCase):
 
         w = self._window()
         w.shutdown()
-        # Ne doit ni lever, ni toucher au banc de la fenêtre morte.
         bus.emit("atterri", force=1.0, vitesse=1400.0)
-        self.assertTrue(w._particles.empty)
+        self.assertIsNone(w.dust)
 
 
 class IntroSequenceTest(unittest.TestCase):

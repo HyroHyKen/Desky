@@ -25,6 +25,11 @@ from pet.anim.particles import CAPACITY, DUST, REFUS, SLEEP, SPARK, Particles
 
 from .qt_app import ensure_app
 
+# Rectangle du pet en pixels **physiques**, tel que `window._pet_rect` le rend.
+# Décalé de l'origine exprès : une recette qui oublierait de l'ajouter passerait
+# tous les tests si le pet était en (0, 0).
+RECT = (640, 380, 220, 220)
+
 
 def _joue(banc: Particles, secondes: float, pet_h: float = 220.0,
           dt: float = 1.0 / 120.0) -> int:
@@ -95,6 +100,51 @@ class BankTest(unittest.TestCase):
             chutes.append(float(banc.y[banc.alive][0]))
         self.assertAlmostEqual(chutes[1] / chutes[0], 400.0 / 120.0, places=3)
 
+    def test_la_poussiere_ne_traverse_pas_le_sol(self) -> None:
+        """Sans plancher, la gerbe a l'air de tomber dans un trou.
+
+        Elle est soulevée au niveau des pieds, la gravité la tire vers le bas,
+        et elle finit sa vie **sous** la ligne où le robot se tient. Ce n'est
+        pas subtil : on voit la poussière passer derrière le sol.
+        """
+        banc = Particles(seed=10)
+        sol = 500.0
+        banc.burst(DUST, 300.0, sol - 2.0, 12, speed=180.0, spread=0.6,
+                   life=1.2, size=6.0)
+        for _ in range(140):
+            banc.step(1.0 / 120.0, 220.0, floor=sol)
+            vivantes = banc.alive
+            if vivantes.any():
+                self.assertLessEqual(float(banc.y[vivantes].max()), sol + 1e-4)
+
+    def test_sans_plancher_elle_s_enfonce(self) -> None:
+        """Le pendant du test précédent : c'est bien le plancher qui retient,
+        et non un réglage de gravité qui masquerait le problème."""
+        banc = Particles(seed=10)
+        sol = 500.0
+        banc.burst(DUST, 300.0, sol - 2.0, 12, speed=180.0, spread=0.6,
+                   life=1.2, size=6.0)
+        for _ in range(140):
+            banc.step(1.0 / 120.0, 220.0)
+        vivantes = banc.alive
+        self.assertGreater(float(banc.y[vivantes].max()), sol)
+
+    def test_une_particule_posee_ne_rebondit_pas(self) -> None:
+        """De la poussière ne rebondit pas, et un rebond ferait remarquer
+        chaque grain individuellement."""
+        banc = Particles(seed=11)
+        sol = 400.0
+        banc.burst(DUST, 100.0, sol - 1.0, 4, speed=200.0, spread=0.1,
+                   life=2.0, size=5.0)
+        hauteurs = []
+        for _ in range(180):
+            banc.step(1.0 / 120.0, 220.0, floor=sol)
+            if banc.alive.any():
+                hauteurs.append(float(banc.y[banc.alive].max()))
+        # Une fois au sol, elle y reste : la suite des maxima ne redescend pas.
+        arrivee = [h for h in hauteurs if abs(h - sol) < 1e-3]
+        self.assertGreater(len(arrivee), 30, "aucune particule ne se pose")
+
     def test_l_avancement_de_vie_reste_borne(self) -> None:
         banc = Particles(seed=5)
         banc.burst(SLEEP, 0.0, 0.0, 4, speed=10.0, spread=0.2,
@@ -113,7 +163,7 @@ class RecipeTest(unittest.TestCase):
         from pet.ui import sparks
 
         banc = Particles(seed=6)
-        self.assertEqual(sparks.landing_dust(banc, 0.05, 220.0, 220.0), 0)
+        self.assertEqual(sparks.landing_dust(banc, 0.05, RECT), 0)
         self.assertTrue(banc.empty)
 
     def test_la_poussiere_suit_la_force_du_choc(self) -> None:
@@ -124,7 +174,7 @@ class RecipeTest(unittest.TestCase):
         comptes = []
         for force in (0.25, 1.0):
             banc = Particles(seed=7)
-            comptes.append(sparks.landing_dust(banc, force, 220.0, 220.0))
+            comptes.append(sparks.landing_dust(banc, force, RECT))
         self.assertLess(comptes[0], comptes[1])
 
     def test_les_etincelles_de_soin_ne_naissent_pas_sur_le_visage(self) -> None:
@@ -135,12 +185,12 @@ class RecipeTest(unittest.TestCase):
         from pet.ui import sparks
 
         banc = Particles(seed=8)
-        h = 220.0
-        sparks.care_sparks(banc, h, h)
+        left, top, w, h = RECT
+        sparks.care_sparks(banc, RECT)
         idx, _ = banc.visible()
         ys = banc.y[idx]
         # Le visage occupe le tiers supérieur : aucune naissance là.
-        self.assertGreater(float(ys.min()), h * 0.45,
+        self.assertGreater(float(ys.min()), top + h * 0.45,
                            "une étincelle naît sur le visage")
         xs = banc.x[idx]
         self.assertGreater(float(xs.max() - xs.min()), h * 0.3,
@@ -152,7 +202,7 @@ class RecipeTest(unittest.TestCase):
         from pet.ui import sparks
 
         banc = Particles(seed=9)
-        sparks.refusal_puff(banc, 220.0, 220.0)
+        sparks.refusal_puff(banc, RECT)
         self.assertLessEqual(banc.count, 5)
         self.assertTrue(bool(np.all(banc.kind[banc.alive] == REFUS)))
         _joue(banc, 1.0)

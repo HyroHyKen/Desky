@@ -47,7 +47,7 @@ REFUS = 3
 # carrée. Exprimée relativement, comme tout le reste du produit : la taille de
 # rendu est réglable de 120 à 400 px (§17.1) et la poussière doit retomber de la
 # même façon aux deux extrêmes.
-GRAVITY = {DUST: 2.6, SPARK: 1.1, SLEEP: -0.10, REFUS: 2.2}
+GRAVITY = {DUST: 1.5, SPARK: 1.1, SLEEP: -0.10, REFUS: 2.2}
 
 # Frottement, par seconde. La poussière s'arrête vite — c'est de la matière
 # soulevée, pas un projectile ; les étincelles gardent leur élan plus longtemps.
@@ -130,12 +130,19 @@ class Particles:
 
     # -- intégration ---------------------------------------------------------
 
-    def step(self, dt: float, pet_h: float) -> bool:
+    def step(self, dt: float, pet_h: float, floor: float | None = None) -> bool:
         """Avance le banc. Rend `True` s'il reste quelque chose de vivant.
 
         `pet_h` convertit les constantes relatives en pixels : la gravité d'une
         poussière doit produire la même image sur un pet de 120 px et sur un de
         400.
+
+        `floor` est l'ordonnée du sol, en pixels d'écran. Sans lui, la poussière
+        **traverse le sol** : elle est soulevée au niveau des pieds, la gravité
+        la tire vers le bas, et elle finit sa vie sous la ligne où le robot se
+        tient. Ce n'est pas subtil — la gerbe a l'air de tomber dans un trou.
+        Les familles qui montent (étincelles, sommeil) n'en ont pas besoin, mais
+        le plancher ne leur coûte rien puisqu'elles ne l'atteignent jamais.
         """
         if not self._n:
             return False
@@ -163,6 +170,18 @@ class Particles:
 
         self.x[vivantes] += self.vx[vivantes] * dt
         self.y[vivantes] += self.vy[vivantes] * dt
+
+        if floor is not None:
+            # Au sol, la particule **glisse et s'arrête** au lieu de rebondir :
+            # de la poussière ne rebondit pas, et un rebond ferait remarquer
+            # chaque grain individuellement — exactement ce qu'une poussière ne
+            # doit pas faire.
+            posees = vivantes & (self.y > floor)
+            if posees.any():
+                self.y[posees] = floor
+                self.vy[posees] = 0.0
+                self.vx[posees] *= max(0.0, 1.0 - 6.0 * dt)
+
         self._n = int(vivantes.sum())
         return True
 

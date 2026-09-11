@@ -38,7 +38,6 @@ from PySide6.QtWidgets import QWidget
 from ..anim.curiosity import CuriousGaze
 from ..anim.easing import Spring
 from ..anim.impact import Impact
-from ..anim.particles import Particles
 from ..anim.layers import AnimContext, Animator
 from ..anim.locomotion import Locomotion, Terrain
 from ..brain.session import Session
@@ -51,6 +50,7 @@ from ..render.glyphs import GLYPH_FOR_NEED
 from ..render.scene import Scene
 from ..ui.item import ItemWindow, SpritePicker
 from ..ui import sparks
+from ..ui.dust import ParticleWindow
 from ..ui.panel import CarePanel
 from ..state.save import Store
 from . import win32
@@ -248,10 +248,10 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         # réagissait au clic d'autant plus mollement qu'il était occupé.
         self._impact = Impact()
 
-        # Particules (lot L11). Peintes par-dessus l'image rendue, jamais
-        # dedans : le hit-testing lit l'alpha du FBO, et une étincelle qui y
-        # figurerait deviendrait cliquable. Voir `ui/sparks`.
-        self._particles = Particles(seed=int(genome.get("seed", 0)) ^ 0xD057)
+        # Particules (lot L11). Dans **leur propre fenêtre**, pas dans celle
+        # du pet : ici elles suivraient ses rebonds et seraient coupées à ses
+        # pieds. Voir `ui/dust`. Construite au premier effet, comme le panneau.
+        self.dust: ParticleWindow | None = None
         self._sleep_t = 0.0
         self._abonnements: list[tuple[str, object]] = []
         self._subscribe_effects()
@@ -671,11 +671,6 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         painter = QPainter(self)
         # Source déjà prémultipliée : la composition par défaut est la bonne.
         painter.drawImage(0, 0, self._qimage)
-        # Les particules **par-dessus**, et seulement ici : dessinées dans la
-        # scène GL, elles entreraient dans l'alpha que lit le hit-testing et
-        # deviendraient cliquables (§6).
-        if not self._particles.empty:
-            sparks.draw(painter, self._particles)
         painter.end()
         self._t_paint += time.perf_counter() - _t_enter
         self._paints += 1
@@ -798,45 +793,52 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
             bus.unsubscribe(nom, fonction)
         self._abonnements.clear()
 
-    def _logical(self) -> tuple[float, float]:
-        """Taille du widget en pixels **logiques** — le repère de `QPainter`.
+    def _ensure_dust(self) -> ParticleWindow:
+        """Le calque, créé au premier effet et recentré sur le pet.
 
-        Les particules vivent dans ce repère et non dans celui du rendu : elles
-        sont peintes par `paintEvent`, qui travaille en logique. Confondre les
-        deux donne des gerbes deux fois trop grandes sur un écran à 200 %.
+        Recentré **ici** et non à chaque image : `reframe` ne fait rien tant
+        qu'une particule vit, donc le calque se replace entre deux gerbes et
+        jamais pendant. Une fenêtre qui glisse sous une gerbe en cours la
+        rognerait par un bord mouvant.
         """
-        return float(self.width()), float(self.height())
+        if self.dust is None:
+            self.dust = ParticleWindow()
+        _, _, pw, _ = self._pet_rect()
+        self.dust.reframe(self._pet_rect(), pw / max(1, self.width()))
+        return self.dust
 
     def _on_landed(self, force: float, vitesse: float) -> None:
-        w, h = self._logical()
-        sparks.landing_dust(self._particles, force, w, h)
+        sparks.landing_dust(self._ensure_dust().banc, force, self._pet_rect())
 
     def _on_care_sparks(self, soin: str) -> None:
-        w, h = self._logical()
-        sparks.care_sparks(self._particles, w, h)
+        sparks.care_sparks(self._ensure_dust().banc, self._pet_rect())
 
     def _on_refusal(self, emplacement: str, cle: str, raison: str) -> None:
-        w, h = self._logical()
-        sparks.refusal_puff(self._particles, w, h)
+        sparks.refusal_puff(self._ensure_dust().banc, self._pet_rect())
 
     def _step_particles(self, dt: float) -> None:
-        """Avance le banc, et laisse tomber un « Z » quand le pet dort.
+        """Avance le calque, et laisse tomber un « Z » quand le pet dort.
 
         Le sommeil est le seul effet **continu** du lot : il n'a pas de fait
         déclencheur, c'est un état. D'où l'émission au compte-gouttes ici plutôt
         qu'un abonnement — et un intervalle long, parce qu'un robot qui dort ne
         doit surtout pas attirer l'attention.
         """
-        _, h = self._logical()
-        self._particles.step(dt, h)
-
         if self._plan.action == "nap" and not self._dragging:
             self._sleep_t += dt
             if self._sleep_t >= SLEEP_Z_PERIOD:
                 self._sleep_t = 0.0
-                sparks.sleep_z(self._particles, *self._logical())
+                sparks.sleep_z(self._ensure_dust().banc, self._pet_rect())
         else:
             self._sleep_t = SLEEP_Z_PERIOD * 0.6
+
+        if self.dust is not None:
+            _, _, _, ph = self._pet_rect()
+            # Le sol que la poussière ne doit pas traverser est celui sur
+            # lequel le robot se tient : une seule définition, et c'est déjà
+            # celle qu'utilise la chute.
+            sol = floor_y(self.current_monitor().work, ph) + ph
+            self.dust.step(dt, float(ph), sol)
 
     # -- cadence (correctif d'après-lot L6) ----------------------------------
 
@@ -899,7 +901,7 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         # elle, tournait à 30.
         if not self._impact.settled:
             return True
-        if not self._particles.empty:
+        if self.dust is not None and not self.dust.banc.empty:
             return True
         return False
 
@@ -1074,6 +1076,9 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
 
     def shutdown(self) -> None:
         self._unsubscribe_effects()
+        if self.dust is not None:
+            self.dust.close()
+            self.dust = None
         self._close_item()
         if self.panel is not None:
             self.panel.close()

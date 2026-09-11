@@ -5,23 +5,18 @@ Deux choses ici, et elles vont ensemble : ce qu'un fait produit comme gerbe, et
 esthétique, et les séparer obligerait à relire deux fichiers pour régler un
 effet.
 
-**Peintes par `QPainter`, pas rendues dans la scène GL.** C'est la contrainte
-§6, et elle est dure : le hit-testing du pet lit l'alpha de l'image rendue
-(`window._opaque_bbox` et `_on_hit_test`). Toute matière dessinée dans le FBO
-devient donc **cliquable** — des étincelles qui avalent les clics destinés à la
-fenêtre du dessous, et une zone d'interception qui enfle à chaque atterrissage.
-Peintes par-dessus la QImage, elles ne touchent jamais cet alpha : le click-
-through reste exactement ce qu'il était, sans qu'on ait à maintenir un second
-masque.
+**Peintes par `QPainter`, pas rendues dans la scène GL.** Le hit-testing du pet
+lit l'alpha de l'image rendue (`window._opaque_bbox` et `_on_hit_test`) : toute
+matière dessinée dans le FBO deviendrait **cliquable** — des étincelles qui
+avalent les clics destinés à la fenêtre du dessous. Peintes hors du rendu, elles
+ne touchent jamais cet alpha. C'est aussi la voie la moins chère : aucune passe
+GL, aucun tampon à recycler.
 
-Accessoirement, c'est aussi la voie la moins chère — aucune passe GL, aucun
-tampon à recycler.
-
-**Il y a la place.** Mesuré sur trois génomes dans une fenêtre de 220 px : le
-robot laisse 64 à 72 px libres de chaque côté, soit près d'un tiers de la
-largeur. Le bas, lui, est occupé — les pieds touchent le bord, à trois pixels
-près. La poussière part donc sur les côtés et vers le haut, ce qui est de toute
-façon ce que fait la poussière.
+**Et peintes dans leur propre fenêtre**, pas dans celle du robot — voir
+`ui/dust` pour les deux raisons. Conséquence ici : toutes les positions sont en
+**pixels physiques d'écran**, comme celles du pet et des objets de soin, et
+jamais en coordonnées de widget. Une particule appartient à l'endroit où elle
+est retombée, pas à la fenêtre qui passait par là.
 """
 
 from __future__ import annotations
@@ -52,12 +47,18 @@ REFUS_COLOR = QColor(196, 112, 58)     # l'ambre des jauges basses
 # Recettes
 # ---------------------------------------------------------------------------
 #
-# Toutes prennent la **hauteur logique du pet** et expriment leurs distances en
-# fractions de celle-ci : la taille de rendu va de 120 à 400 px (§17.1), et un
-# effet réglé en pixels serait ridicule à un bout et envahissant à l'autre.
+# Toutes prennent le **rectangle du pet en pixels physiques** — `(gauche, haut,
+# largeur, hauteur)`, exactement ce que rend `window._pet_rect` — et expriment
+# leurs distances en fractions de sa hauteur : la taille de rendu va de 120 à
+# 400 px (§17.1), et un effet réglé en pixels serait ridicule à un bout et
+# envahissant à l'autre.
+#
+# Le rectangle plutôt que la seule taille : une gerbe naît **quelque part sur
+# l'écran**, et ce quelque part ne doit plus rien devoir à la fenêtre qui
+# l'émet.
 
 
-def landing_dust(banc: Particles, force: float, w: float, h: float) -> int:
+def landing_dust(banc: Particles, force: float, rect) -> int:
     """Poussière d'atterrissage, dosée par la force du choc.
 
     `force` vient du bus, telle que l'encaissement du lot L10 l'a calculée : la
@@ -68,15 +69,16 @@ def landing_dust(banc: Particles, force: float, w: float, h: float) -> int:
     force = max(0.0, min(1.0, force))
     if force < 0.12:
         return 0                        # un pas posé ne soulève rien
+    left, top, w, h = rect
     combien = int(4 + 12 * force)
     return banc.burst(
-        DUST, w * 0.5, h - h * 0.02, combien,
+        DUST, left + w * 0.5, top + h - h * 0.02, combien,
         speed=h * (0.55 + 0.95 * force), spread=0.62,
         life=0.42 + 0.22 * force, size=h * 0.060,
         x_spread=w * 0.06, y_spread=h * 0.01)
 
 
-def care_sparks(banc: Particles, w: float, h: float) -> int:
+def care_sparks(banc: Particles, rect) -> int:
     """Halo de soin : il naît **autour** du robot, et il monte.
 
     Le point de naissance est bas et large, jamais au centre. Émises du milieu
@@ -86,29 +88,32 @@ def care_sparks(banc: Particles, w: float, h: float) -> int:
     largeur, elles remontent le long de la silhouette, ce qui est exactement ce
     qu'on voulait montrer.
     """
+    left, top, w, h = rect
     return banc.burst(
-        SPARK, w * 0.5, h * 0.82, 16,
+        SPARK, left + w * 0.5, top + h * 0.82, 16,
         speed=h * 0.80, spread=0.55, life=0.70, size=h * 0.040, up=1.0,
         x_spread=w * 0.36, y_spread=h * 0.04)
 
 
-def refusal_puff(banc: Particles, w: float, h: float) -> int:
+def refusal_puff(banc: Particles, rect) -> int:
     """Petit refus : trois particules ambre, courtes. Un « non », pas un drame.
 
     Le §12 interdit de culpabiliser l'utilisateur : un achat hors budget
     mérite un signal, pas une réprimande. Trois particules et un tiers de
     seconde sont exactement le poids d'un haussement d'épaules.
     """
+    left, top, w, h = rect
     return banc.burst(
-        REFUS, w * 0.5, h * 0.72, 4,
+        REFUS, left + w * 0.5, top + h * 0.72, 4,
         speed=h * 0.38, spread=0.30, life=0.36, size=h * 0.038, up=0.8,
         x_spread=w * 0.16, y_spread=h * 0.02)
 
 
-def sleep_z(banc: Particles, w: float, h: float) -> int:
+def sleep_z(banc: Particles, rect) -> int:
     """Un « Z » qui s'élève. Émis au compte-gouttes par la fenêtre."""
+    left, top, w, h = rect
     return banc.burst(
-        SLEEP, w * 0.62, h * 0.34, 1,
+        SLEEP, left + w * 0.62, top + h * 0.34, 1,
         speed=h * 0.13, spread=0.25, life=2.1, size=h * 0.075, up=1.0)
 
 
@@ -128,16 +133,26 @@ def _z_path(painter: QPainter, x: float, y: float, s: float) -> None:
     ])
 
 
-def draw(painter: QPainter, banc: Particles) -> None:
-    """Peint le banc. Les coordonnées sont celles du widget, en pixels logiques."""
+def draw(painter: QPainter, banc: Particles, origin=(0.0, 0.0),
+         dpr: float = 1.0) -> None:
+    """Peint le banc dans le calque dont le coin haut-gauche est `origin`.
+
+    Les particules sont en pixels physiques d'écran ; `QPainter`, lui, travaille
+    en logique. La conversion se fait ici, en un seul point, exactement comme
+    `window.place_panel` le fait pour le panneau. Confondre les deux donne des
+    gerbes deux fois trop grandes et décalées d'un écran sur un poste à 200 %.
+    """
     idx, age = banc.visible()
     if idx.size == 0:
         return
 
+    ox, oy = origin
+    echelle = 1.0 / max(1e-6, dpr)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    xs, ys = banc.x[idx], banc.y[idx]
-    tailles, familles = banc.size[idx], banc.kind[idx]
+    xs = (banc.x[idx] - ox) * echelle
+    ys = (banc.y[idx] - oy) * echelle
+    tailles, familles = banc.size[idx] * echelle, banc.kind[idx]
 
     for k in range(idx.size):
         a = float(age[k])
