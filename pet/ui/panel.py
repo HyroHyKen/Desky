@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QLineEdit, QToolTip, QWidget
 
@@ -38,7 +38,7 @@ from ..geometry.cosmetics import NONE, SLOTS, by_slot, price as cosmetic_price
 from ..genome.schema import ACCENT_COLORS, BODY_COLORS, hex_to_rgb
 from .item import ITEM_KINDS
 from .icons import MOOD_ICONS, center_square, draw_icon
-from .motion import SpringBank, Ticker, Tween
+from .motion import SpringBank, Stagger, Ticker, Tween
 
 # -- métriques, toutes en pixels logiques Qt ---------------------------------
 #
@@ -90,10 +90,42 @@ OPEN_SECONDS = 0.26
 CLOSE_SECONDS = 0.15
 
 # Échelle du panneau au tout début de son ouverture. Pas zéro : un panneau qui
-# naît d'un point est un effet de diaporama. Il arrive presque à sa taille, et
-# `ease_out_back` lui fait dépasser la sienne d'un cheveu avant de se poser —
-# c'est ce dépassement, et lui seul, qui fait la différence de sensation.
-OPEN_SCALE = 0.92
+# naît d'un point est un effet de diaporama. Il arrive nettement plus petit
+# qu'il ne finira, et `ease_out_back` lui fait dépasser sa taille avant de se
+# poser — c'est ce dépassement qui donne au panneau l'air d'avoir une masse.
+OPEN_SCALE = 0.80
+
+# **Pas de fondu.** L'opacité ne sert qu'à ne pas laisser un bord franc
+# apparaître au premier pixel, et à escamoter le panneau à la fermeture : elle
+# atteint 1 avant le tiers de l'ouverture, donc on ne la perçoit pas comme un
+# fondu mais comme le début du bond. Une interface qui s'éclaircit n'a pas de
+# matière ; c'est la taille et la cascade qui portent l'arrivée, pas l'alpha.
+OPEN_ALPHA_RAMP = 0.45
+
+# Cascade d'entrée des éléments. 35 ms de décalage : six boutons s'installent
+# en 175 ms de plus que le premier, ce qui se perçoit comme une vague et non
+# comme une attente. Au-delà de 60 ms, on attend le dernier bouton.
+ENTER_DELAY = 0.035
+ENTER_SECONDS = 0.30
+
+# Plafond de la **durée totale** de la vague. Sans lui, la page de
+# personnalisation et ses douze pastilles mettraient trois quarts de seconde à
+# s'installer : à partir de là, on n'admire plus, on attend. Toutes les pages
+# arrivent donc en un peu moins d'une demi-seconde, quelles qu'elles soient.
+ENTER_SPREAD = 0.17
+
+# Chaque élément arrive **d'en bas** et minuscule. L'échelle de départ est
+# basse exprès : à 0,70 tous les éléments sont déjà lisibles à la première
+# image et la cascade ne se lit plus comme une arrivée, seulement comme un
+# agrandissement d'ensemble. À 0,25 chaque élément se pose vraiment à son tour.
+ENTER_RISE = 13.0
+ENTER_SCALE = 0.25
+
+# Opacité propre à chaque élément, atteinte au premier tiers de son entrée —
+# soit une centaine de millisecondes. Ce n'est pas un fondu : c'est ce qui
+# évite qu'un bouton n'existe d'un coup à un quart de sa taille. Passé ce
+# seuil, seule la taille travaille.
+ENTER_ALPHA_RAMP = 0.32
 
 # Réponse des boutons. L'appui **enfonce** — échelle inférieure à 1 — et le
 # relâchement repasse par-dessus grâce au sous-amortissement du ressort. Le
@@ -132,7 +164,13 @@ BUTTON_HOVER = QColor(206, 216, 221)
 BUTTON_OFF = QColor(236, 239, 241)
 INK_OFF = QColor(176, 184, 191)
 BAR_BG = QColor(224, 229, 232)
-BAR_FILL = QColor(31, 168, 186)
+
+# Le cyan du produit. Une seule définition : le filet sous les titres et le
+# remplissage des jauges doivent être exactement la même couleur, faute de quoi
+# l'interface a deux accents et n'en a donc aucun.
+ACCENT = QColor(31, 168, 186)
+BAR_FILL = ACCENT
+
 BAR_LOW = QColor(196, 112, 58)
 SWATCH_EDGE = QColor(24, 32, 40, 90)
 
@@ -230,8 +268,28 @@ ITEM_LABELS: dict[str, str] = {
 TOOLTIP_CATEGORY = "Voir les %s"
 
 # Hauteur de la bande de titre, et sa police.
-TITLE_H = 26
-TITLE_SIZE = 15
+TITLE_H = 32
+TITLE_SIZE = 18
+
+# Filet d'accent sous le titre. Il fait deux choses qu'un titre seul ne fait
+# pas : il ancre le texte à une largeur — donc la page a une tête, pas une
+# ligne flottante — et il donne à la cascade quelque chose à **dessiner** en
+# arrivant, puisqu'il se déploie depuis son centre.
+TITLE_RULE_H = 3.0
+TITLE_RULE_PAD = 12.0              # débord de chaque côté du texte
+TITLE_RULE_GAP = 3.0               # entre la ligne de base et le filet
+
+# Air entre le filet du titre et le premier élément de la page. Sans lui le
+# titre est collé à ce qu'il annonce, et l'œil lit un bloc au lieu d'une
+# en-tête suivie d'un contenu.
+#
+# Deux familles de pages s'en passent, et pour la même raison : elles ont déjà
+# quelque chose entre le titre et les actions. La boutique et ses rayons
+# portent la ligne du solde ; la page de statut n'a pas de titre du tout, son
+# en-tête — pastille d'humeur et nom — en tient lieu et doit rester soudé aux
+# jauges qu'il commente.
+TITLE_LEAD = 15
+TITLE_TIGHT_PAGES: frozenset[str] = frozenset({"status", "shop"}) | frozenset(SHOP_PAGES)
 
 # Boutons du menu racine. La personnalisation se glisse **avant** la boutique :
 # les deux touchent à l'apparence, et celle qui est gratuite doit se trouver la
@@ -334,10 +392,12 @@ class CarePanel(QWidget):
         # indexés par `Button.action`, l'identité que le test de clic utilise
         # déjà — un indice de rangée ne survivrait pas à un changement de page.
         self._ouverture = Tween(0.0)
+        self._entree = Stagger(ENTER_DELAY, ENTER_SECONDS, ENTER_SPREAD)
         self._survol = SpringBank(*HOVER_SPRING)
         self._appui = SpringBank(*PRESS_SPRING)
         self._appui_action = ""
         self._fermeture = False
+        self._opacite_fond = 1.0
         self._ticker = Ticker(self.step, self.update, self)
 
         self.setWindowFlags(
@@ -382,6 +442,8 @@ class CarePanel(QWidget):
             self._ouverture.jump(0.0)
             self.show()
         self._ouverture.to(1.0, OPEN_SECONDS, ease_out_back)
+        if not deja_visible:
+            self._entree.start(self._entrance_keys(self._layout()))
         self._ticker.wake()
         if not deja_visible:
             bus.emit("panneau_ouvert")
@@ -399,6 +461,9 @@ class CarePanel(QWidget):
         if immediat:
             self._fermeture = False
             self._ouverture.jump(0.0)
+            # La cascade aussi doit être soldée : laissée en vol, elle
+            # rallumerait le tic d'un panneau déjà masqué.
+            self._entree.finish()
             self._ticker.stop()
             self.hide()
             bus.emit("panneau_ferme")
@@ -422,11 +487,13 @@ class CarePanel(QWidget):
         horloge réelle, donc sans durée fausse.
         """
         bouge = self._ouverture.step(dt)
+        bouge = self._entree.step(dt) or bouge
         bouge = self._survol.step(dt) or bouge
         bouge = self._appui.step(dt) or bouge
 
         if self._fermeture and not self._ouverture.moving:
             self._fermeture = False
+            self._entree.finish()
             self.hide()
             bus.emit("panneau_ferme")
             return False
@@ -451,6 +518,61 @@ class CarePanel(QWidget):
         self._appui.keep(cles)
         self._ticker.wake()
 
+    def _entrance_keys(self, layout: Layout) -> list[str]:
+        """Ordre de la cascade : de haut en bas, comme on lit la page.
+
+        Les boutons viennent en dernier parce qu'ils sont ce vers quoi la main
+        va : le regard descend le titre, l'état, puis trouve les actions déjà
+        installées. L'ordre inverse ferait arriver les boutons sous un titre
+        encore absent, et on ne saurait pas de quelle page ils dépendent.
+        """
+        cles: list[str] = []
+        if layout.title:
+            cles.append("titre")
+        if layout.mood or layout.name:
+            cles.append("entete")
+        if layout.tokens >= 0:
+            cles.append("bourse")
+        cles += ["barre:%s" % nom for nom, _ in layout.bars]
+        if layout.big_icon:
+            cles.append("grande_icone")
+        cles += ["bouton:%s" % b.action for b in layout.buttons]
+        return cles
+
+    def _entree_debut(self, painter: QPainter, cle: str, ancre) -> bool:
+        """Ouvre la transformation d'entrée d'un élément.
+
+        Rend `True` si un `restore()` est dû — le `_entree_fin` correspondant
+        s'en charge. Deux appels appariés plutôt qu'un gestionnaire de
+        contexte : le bouton en emboîte une seconde par-dessus, pour l'appui,
+        et deux `with` imbriqués autour de six lignes coûtent plus à lire
+        qu'ils ne rapportent.
+
+        Le test porte sur `moving` et non sur la valeur : la courbe **dépasse**
+        1 au milieu du mouvement, et comparer la valeur à 1 sauterait la
+        transformation précisément pendant le dépassement. Une fois la cascade
+        finie, toutes les valeurs valent exactement 1 et il n'y a plus rien à
+        appliquer.
+        """
+        if not self._entree.moving:
+            return False
+        k = self._entree.value(cle)
+        echelle = ENTER_SCALE + (1.0 - ENTER_SCALE) * k
+        painter.save()
+        # `setOpacity` **remplace** l'opacité courante au lieu de la
+        # multiplier : celle du conteneur serait perdue si on se contentait de
+        # poser la sienne. On compose donc les deux à la main.
+        painter.setOpacity(self._opacite_fond
+                           * max(0.0, min(1.0, k / ENTER_ALPHA_RAMP)))
+        painter.translate(ancre.x(), ancre.y() + ENTER_RISE * (1.0 - k))
+        painter.scale(echelle, echelle)
+        painter.translate(-ancre.x(), -ancre.y())
+        return True
+
+    def _entree_fin(self, painter: QPainter, ouverte: bool) -> None:
+        if ouverte:
+            painter.restore()
+
     def _echelle_bouton(self, action: str) -> float:
         """Échelle peinte d'un bouton : l'appui enfonce, le survol soulève."""
         appui = self._appui.value(action)
@@ -473,6 +595,13 @@ class CarePanel(QWidget):
         # n'existent plus. Sans cette purge, le tic ne s'arrêterait jamais.
         self._appui_action = ""
         self._sync_targets(layout.buttons)
+        if change and self.isVisible():
+            # Naviguer relance la cascade : la page suivante s'installe au
+            # lieu de se substituer. C'est ce qui distingue une navigation
+            # d'un simple changement de contenu — et c'est gratuit, la
+            # mécanique d'entrée est déjà là.
+            self._entree.start(self._entrance_keys(layout))
+            self._ticker.wake()
         if change:
             bus.emit("page_changee", page=page)
 
@@ -598,8 +727,19 @@ class CarePanel(QWidget):
         Un seul point de calcul : chaque page ajoute la bande de titre au même
         endroit, donc en ajouter un à une page ne demande pas de retoucher sa
         géométrie.
+
+        Le menu racine est le cas particulier qui justifie de ne pas se
+        contenter de `PAGE_TITLES` : son titre est le **nom du robot**, qui n'y
+        figure évidemment pas. Il calculait donc sa hauteur à part, et toute
+        retouche de la bande de titre devait être faite à deux endroits — ce
+        que cette méthode existe précisément pour éviter.
         """
-        return PAD + (TITLE_H if PAGE_TITLES.get(self.page) else 0)
+        titre = PAGE_TITLES.get(self.page) or (
+            self.session.name if self.page == "menu" else "")
+        if not titre:
+            return PAD
+        return PAD + TITLE_H + (0 if self.page in TITLE_TIGHT_PAGES
+                                else TITLE_LEAD)
 
     def _layout(self) -> Layout:
         """**Seule** source de la géométrie : peinture et clics en dérivent."""
@@ -612,11 +752,8 @@ class CarePanel(QWidget):
             # Le menu racine porte le **nom du robot** en guise de titre : c'est
             # sa page d'accueil, et aucun libellé générique ne dirait mieux où
             # l'on se trouve.
-            layout = Layout(height=BUTTON + 2 * PAD, title=nom)
-            if nom:
-                layout.height += TITLE_H
-            layout.buttons = self._row(MENU_ACTIONS,
-                                       PAD + (TITLE_H if nom else 0))
+            layout = Layout(height=haut + BUTTON + PAD, title=nom)
+            layout.buttons = self._row(MENU_ACTIONS, haut)
             return layout
 
         if self.page == "status":
@@ -685,20 +822,25 @@ class CarePanel(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # Arrivée du panneau (lot L9). L'échelle et l'opacité sont **peintes**,
-        # la géométrie du widget ne bouge pas : animer `setGeometry` ferait
-        # travailler le gestionnaire de fenêtres trente fois par seconde pour
-        # un widget translucide toujours au-dessus, et le résultat saccade.
+        # Arrivée du panneau. L'échelle est **peinte**, la géométrie du widget
+        # ne bouge pas : animer `setGeometry` ferait travailler le gestionnaire
+        # de fenêtres trente fois par seconde pour un widget translucide
+        # toujours au-dessus, et le résultat saccade.
         #
         # L'ancrage est le bas-centre : le panneau se pose au-dessus de la tête
         # du pet, et grandir depuis ce point-là donne l'impression qu'il en
         # sort. Grandir depuis le centre le ferait apparaître de nulle part.
         ouverture = self._ouverture.value
+        self._opacite_fond = 1.0
         # `abs(... - 1)` et non `< 1` : `ease_out_back` **dépasse** 1 avant de
         # revenir, et c'est ce dépassement que le §10 réclame. Un test qui ne
         # regarderait que « pas encore ouvert » le supprimerait sans bruit.
         if abs(ouverture - 1.0) > 1e-3:
-            painter.setOpacity(max(0.0, min(1.0, ouverture)))
+            # L'opacité n'est pas un fondu : elle atteint 1 avant le tiers de
+            # l'ouverture. Elle ne sert qu'à éviter un bord franc au premier
+            # pixel, et à escamoter le panneau quand il part.
+            self._opacite_fond = max(0.0, min(1.0, ouverture / OPEN_ALPHA_RAMP))
+            painter.setOpacity(self._opacite_fond)
             k = OPEN_SCALE + (1.0 - OPEN_SCALE) * ouverture
             painter.translate(self.width() / 2.0, float(self.height()))
             painter.scale(k, k)
@@ -714,22 +856,49 @@ class CarePanel(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(fond)
 
+        # Le contenu entre en cascade, de haut en bas. Chaque élément est peint
+        # à travers sa propre transformation d'entrée : c'est ce qui remplace
+        # le fondu, et c'est ce qui donne au panneau l'air d'être fait de
+        # pièces plutôt que d'être une image qui s'éclaircit.
         if layout.title:
-            self._paint_title(painter, layout.title)
+            fini = self._entree_debut(painter, "titre",
+                                      QPointF(WIDTH / 2.0, PAD - 2 + TITLE_H / 2.0))
+            self._paint_title(painter, layout.title,
+                              self._entree.value("titre"))
+            self._entree_fin(painter, fini)
+
         if layout.tokens >= 0:
+            fini = self._entree_debut(painter, "bourse",
+                                      QPointF(PAD, self._top() + HEADER / 2.0))
             self._paint_purse(painter, layout.tokens)
+            self._entree_fin(painter, fini)
+
         if layout.mood or layout.name:
+            fini = self._entree_debut(painter, "entete",
+                                      QPointF(PAD, PAD + HEADER / 2.0))
             self._paint_header(painter, layout)
+            self._entree_fin(painter, fini)
+
         for index, (need, value) in enumerate(layout.bars):
             y = PAD + HEADER + BAR_GAP + index * (BAR_HEIGHT + BAR_GAP)
-            self._paint_bar(painter, need, value, y)
+            cle = "barre:%s" % need
+            fini = self._entree_debut(painter, cle,
+                                      QPointF(PAD, y + BAR_HEIGHT / 2.0))
+            self._paint_bar(painter, need, value, y, self._entree.value(cle))
+            self._entree_fin(painter, fini)
+
         if layout.big_icon:
             # Boutique vide : l'icône en gris pâle dit « ici, plus tard ».
             # Le catalogue et les tokens sont le lot L7.
-            draw_icon(painter, layout.big_icon,
-                      QRectF((WIDTH - 62) / 2.0, PAD + 7, 62, 62), INK_OFF)
+            boite = QRectF((WIDTH - 62) / 2.0, PAD + 7, 62, 62)
+            fini = self._entree_debut(painter, "grande_icone", boite.center())
+            draw_icon(painter, layout.big_icon, boite, INK_OFF)
+            self._entree_fin(painter, fini)
 
         for index, button in enumerate(layout.buttons):
+            centre = button.rect.center()
+            entree = self._entree_debut(painter, "bouton:%s" % button.action,
+                                        centre)
             # Échelle autour du **centre du bouton** : depuis l'origine du
             # panneau, un bouton du bas se déplacerait de trente pixels pour se
             # contracter de quatre.
@@ -741,7 +910,6 @@ class CarePanel(QWidget):
             echelle = self._echelle_bouton(button.action)
             transforme = abs(echelle - 1.0) > 1e-4
             if transforme:
-                centre = button.rect.center()
                 painter.save()
                 painter.translate(centre)
                 painter.scale(echelle, echelle)
@@ -751,6 +919,7 @@ class CarePanel(QWidget):
                 self._paint_hold(painter, button)
             if transforme:
                 painter.restore()
+            self._entree_fin(painter, entree)
         painter.end()
 
     def _paint_header(self, painter: QPainter, layout: Layout) -> None:
@@ -763,9 +932,15 @@ class CarePanel(QWidget):
 
         if layout.name:
             # L'une des deux seules occurrences de texte de l'application.
+            #
+            # Même traitement que les titres de page : le nom du robot **est**
+            # le titre de la page de statut, et le voir en demi-gras plus petit
+            # à côté de « Interactions » en gras donnait à cette page l'air
+            # d'appartenir à une autre application.
             font = QFont()
-            font.setPixelSize(17)
-            font.setWeight(QFont.Weight.DemiBold)
+            font.setPixelSize(TITLE_SIZE)
+            font.setWeight(QFont.Weight.Bold)
+            font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
             painter.setFont(font)
             painter.setPen(INK)
             painter.drawText(
@@ -775,7 +950,7 @@ class CarePanel(QWidget):
                 layout.name)
 
     def _paint_bar(self, painter: QPainter, need: str, value: float,
-                   y: int) -> None:
+                   y: int, entree: float = 1.0) -> None:
         icone = QRectF(PAD, y - 2, BAR_HEIGHT + 4, BAR_HEIGHT + 4)
         draw_icon(painter, need, icone, INK_SOFT)
 
@@ -786,7 +961,11 @@ class CarePanel(QWidget):
         painter.drawRoundedRect(QRectF(x, y, largeur, BAR_HEIGHT),
                                 BAR_HEIGHT / 2.0, BAR_HEIGHT / 2.0)
 
-        part = max(0.0, min(1.0, value / 100.0))
+        # Le remplissage se déploie avec l'entrée de la barre, jamais avec un
+        # changement de valeur : une jauge qui s'anime pendant qu'on la lit
+        # réclame l'attention au lieu de l'informer. L'entrée est bornée à 1
+        # ici — le dépassement de la courbe ferait déborder la jauge.
+        part = max(0.0, min(1.0, value / 100.0)) * max(0.0, min(1.0, entree))
         if part > 0.001:
             # Plancher de largeur : une barre à 2 % doit rester visible comme
             # une barre, sinon elle se confond avec une barre vide.
@@ -795,21 +974,45 @@ class CarePanel(QWidget):
             painter.drawRoundedRect(QRectF(x, y, remplie, BAR_HEIGHT),
                                     BAR_HEIGHT / 2.0, BAR_HEIGHT / 2.0)
 
-    def _paint_title(self, painter: QPainter, titre: str) -> None:
-        """Titre de page, centré dans sa bande.
+    def _paint_title(self, painter: QPainter, titre: str,
+                     entree: float = 1.0) -> None:
+        """Titre de page, centré, souligné d'un filet d'accent.
 
         Le texte vient toujours de `PAGE_TITLES` ou du nom du robot, jamais
         d'une chaîne écrite ici : c'est ce qui garde l'interface traduisible.
+
+        Le filet se déploie **depuis son centre** avec l'entrée du titre. Il
+        n'est pas décoratif : sans lui le titre est une ligne de texte posée en
+        haut d'une boîte, et rien ne dit que la page lui appartient. Sa largeur
+        suit celle du texte, donc un titre court ne traîne pas une barre qui le
+        dépasse — et une traduction plus longue reste couverte.
         """
         font = QFont()
         font.setPixelSize(TITLE_SIZE)
-        font.setWeight(QFont.Weight.DemiBold)
+        font.setWeight(QFont.Weight.Bold)
+        # L'interlettrage tient le titre à distance de son propre gras : sans
+        # lui, un mot court en Bold à 18 px fait bloc.
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
         painter.setFont(font)
+
+        bande = QRectF(PAD, PAD - 2, WIDTH - 2 * PAD, TITLE_H - TITLE_RULE_H)
         painter.setPen(INK)
         painter.drawText(
-            QRectF(PAD, PAD - 2, WIDTH - 2 * PAD, TITLE_H),
+            bande,
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter),
             titre)
+
+        largeur = painter.fontMetrics().horizontalAdvance(titre)
+        plein = min(float(WIDTH - 2 * PAD), largeur + 2 * TITLE_RULE_PAD)
+        courant = plein * max(0.0, min(1.0, entree))
+        if courant < 1.0:
+            return
+        y = bande.bottom() + TITLE_RULE_GAP
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ACCENT)
+        painter.drawRoundedRect(
+            QRectF(WIDTH / 2.0 - courant / 2.0, y, courant, TITLE_RULE_H),
+            TITLE_RULE_H / 2.0, TITLE_RULE_H / 2.0)
 
     def _paint_purse(self, painter: QPainter, tokens: int) -> None:
         """Solde : un jeton et un nombre.

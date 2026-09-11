@@ -150,6 +150,74 @@ class TweenTest(unittest.TestCase):
         self.assertFalse(t.step(1.0 / 60.0))
 
 
+class StaggerTest(unittest.TestCase):
+    """La cascade qui remplace le fondu."""
+
+    def test_les_elements_partent_dans_l_ordre(self) -> None:
+        from pet.ui.motion import Stagger
+
+        cascade = Stagger(delai=0.04, duree=0.2, etalement=1.0)
+        cascade.start(["a", "b", "c"])
+        cascade.step(0.02)
+        self.assertGreater(cascade.value("a"), 0.0)
+        self.assertEqual(cascade.value("b"), 0.0, "b est parti avec a")
+        self.assertEqual(cascade.value("c"), 0.0)
+
+    def test_le_premier_arrive_avant_le_dernier(self) -> None:
+        from pet.ui.motion import Stagger
+
+        cascade = Stagger(delai=0.04, duree=0.2, etalement=1.0)
+        cascade.start(["a", "b", "c"])
+        while cascade.value("a") < 1.0:
+            cascade.step(1.0 / 240.0)
+        self.assertLess(cascade.value("c"), 1.0)
+
+    def test_l_etalement_plafonne_la_duree_totale(self) -> None:
+        """Sans plafond, douze pastilles mettent près d'une seconde à
+        s'installer — et à partir de là on n'admire plus, on attend."""
+        from pet.ui.motion import Stagger
+
+        def duree(nombre: int) -> float:
+            cascade = Stagger(delai=0.035, duree=0.30, etalement=0.17)
+            cascade.start(["e%d" % i for i in range(nombre)])
+            t = 0.0
+            while cascade.step(1.0 / 240.0):
+                t += 1.0 / 240.0
+            return t
+
+        self.assertLess(duree(4), 0.48)
+        self.assertLess(duree(12), 0.48)
+        self.assertLess(duree(30), 0.48)
+
+    def test_une_cle_inconnue_est_deja_en_place(self) -> None:
+        """Un bouton qui se dégrise au milieu d'une page établie ne doit pas
+        entrer en cascade : ce serait un sursaut sans cause visible."""
+        from pet.ui.motion import Stagger
+
+        cascade = Stagger()
+        cascade.start(["a"])
+        self.assertEqual(cascade.value("jamais_annonce"), 1.0)
+
+    def test_l_arrivee_depasse(self) -> None:
+        from pet.ui.motion import Stagger
+
+        cascade = Stagger(delai=0.0, duree=0.3)
+        cascade.start(["a"])
+        maximum = 0.0
+        while cascade.step(1.0 / 240.0):
+            maximum = max(maximum, cascade.value("a"))
+        self.assertGreater(maximum, 1.02, "la cascade n'a pas de rebond")
+
+    def test_finish_solde_tout(self) -> None:
+        from pet.ui.motion import Stagger
+
+        cascade = Stagger()
+        cascade.start(["a", "b"])
+        cascade.finish()
+        self.assertFalse(cascade.moving)
+        self.assertEqual(cascade.value("b"), 1.0)
+
+
 class SpringBankTest(unittest.TestCase):
     def test_une_identite_inconnue_rend_le_repos(self) -> None:
         banc = SpringBank()

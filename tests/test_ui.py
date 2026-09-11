@@ -301,6 +301,47 @@ class PanelTest(unittest.TestCase):
         _settle(panel)
         self.assertFalse(panel.isVisible())
 
+    def test_le_titre_respire_au_dessus_du_contenu(self) -> None:
+        """Un titre collé à ce qu'il annonce se lit comme un bloc, pas comme
+        une en-tête suivie d'un contenu."""
+        from pet.ui.panel import PAD, TITLE_H, TITLE_LEAD
+
+        panel, _ = self._panel()
+        for page in ("menu", "interactions", "custom", "settings", "name"):
+            panel.open_page(page)
+            self.assertEqual(panel._top(), PAD + TITLE_H + TITLE_LEAD,
+                             "la page %s n'a pas son air sous le titre" % page)
+
+    def test_la_boutique_et_le_statut_restent_serres(self) -> None:
+        """Les deux ont déjà quelque chose entre le titre et les actions : la
+        ligne du solde pour l'une, l'en-tête d'humeur pour l'autre. Y ajouter
+        de l'air séparerait un bloc qui doit rester soudé."""
+        from pet.ui.panel import PAD, SHOP_PAGES, TITLE_H
+
+        panel, _ = self._panel()
+        for page in ("shop",) + SHOP_PAGES:
+            panel.open_page(page)
+            self.assertEqual(panel._top(), PAD + TITLE_H,
+                             "la page %s a pris de l'air" % page)
+
+        panel.open_page("status")
+        self.assertEqual(panel._top(), PAD, "le statut n'a pas de titre")
+
+    def test_le_menu_ne_calcule_plus_sa_bande_de_titre_a_part(self) -> None:
+        """Son titre est le nom du robot, donc absent de `PAGE_TITLES` : il
+        recopiait le calcul de `_top`, et toute retouche de la bande devait
+        être faite à deux endroits."""
+        from pet.ui.panel import PAD
+
+        panel, _ = self._panel(name="")
+        panel.open_page("menu")
+        self.assertEqual(panel._top(), PAD, "un robot sans nom n'a pas de titre")
+
+        nomme, _ = self._panel()
+        nomme.open_page("menu")
+        self.assertGreater(nomme._top(), PAD)
+        self.assertEqual(nomme._layout().buttons[0].rect.top(), nomme._top())
+
     def test_la_page_de_statut_montre_les_quatre_besoins(self) -> None:
         from pet.brain.needs import NEEDS
 
@@ -819,6 +860,80 @@ class PanelMotionTest(unittest.TestCase):
         panel._sync_targets(boutons)
         _settle(panel)
         self.assertEqual(panel._survol.value(boutons[index].action), 0.0)
+
+    # -- la cascade --------------------------------------------------------
+
+    def test_les_boutons_arrivent_l_un_apres_l_autre(self) -> None:
+        """Le remplacement du fondu, dans sa forme la plus nue.
+
+        Un fondu fait tout arriver en même temps : rien n'a de poids parce que
+        rien n'a son instant. Ici le premier bouton est posé quand le dernier
+        n'a pas commencé.
+        """
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        boutons = panel._layout().buttons
+        premier = "bouton:%s" % boutons[0].action
+        dernier = "bouton:%s" % boutons[-1].action
+
+        # On avance jusqu'au départ du premier bouton plutôt que de fixer un
+        # instant : le titre occupe le premier créneau, et un seuil écrit en
+        # dur casserait au prochain réglage des durées sans rien dire du fond.
+        for _ in range(120):
+            panel.step(1.0 / 240.0)
+            if panel._entree.value(premier) > 0.0:
+                break
+        self.assertGreater(panel._entree.value(premier), 0.0,
+                           "le premier bouton n'est jamais parti")
+        self.assertEqual(panel._entree.value(dernier), 0.0,
+                         "tous les boutons partent ensemble : c'est un fondu")
+
+    def test_le_titre_precede_les_boutons(self) -> None:
+        """L'ordre de la cascade suit la lecture : le regard descend le titre
+        puis trouve les actions. L'inverse ferait arriver des boutons sous un
+        titre encore absent."""
+        panel = self._panel()
+        panel.open_page("interactions")
+        panel.open_panel()
+        cles = panel._entrance_keys(panel._layout())
+        self.assertEqual(cles[0], "titre")
+        self.assertTrue(all(c.startswith("bouton:") for c in cles[-2:]))
+
+    def test_toutes_les_pages_s_installent_en_moins_d_une_demi_seconde(self) -> None:
+        """La page de personnalisation a douze pastilles. Sans plafond
+        d'étalement, sa cascade durerait trois quarts de seconde — et à partir
+        de là on n'admire plus, on attend."""
+        from pet.ui.panel import PAGES
+
+        panel = self._panel()
+        for page in PAGES:
+            panel.open_page(page)
+            panel.open_panel()
+            duree = 0.0
+            while panel.step(1.0 / 240.0):
+                duree += 1.0 / 240.0
+            self.assertLess(duree, 0.5,
+                            "la page %s met %.2f s à s'installer" % (page, duree))
+            panel.close_panel(immediat=True)
+
+    def test_naviguer_relance_la_cascade(self) -> None:
+        """Une navigation installe la page suivante au lieu de la substituer."""
+        panel = self._panel()
+        panel.open_page("menu")
+        panel.open_panel()
+        _settle(panel)
+        self.assertFalse(panel._entree.moving)
+
+        panel.open_page("interactions")
+        self.assertTrue(panel._entree.moving, "la page a été substituée d'un coup")
+
+    def test_changer_de_page_panneau_ferme_n_anime_rien(self) -> None:
+        """`open_page` est appelée par la fenêtre **avant** d'ouvrir : relancer
+        la cascade là laisserait le tic tourner sur un panneau invisible."""
+        panel = self._panel()
+        panel.open_page("status")
+        self.assertFalse(panel._entree.moving)
 
     # -- la peinture -------------------------------------------------------
 

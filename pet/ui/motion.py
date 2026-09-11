@@ -35,7 +35,7 @@ from typing import Callable, Iterable
 
 from PySide6.QtCore import QObject, QTimer, Qt
 
-from ..anim.easing import Spring, ease_in_out
+from ..anim.easing import Spring, ease_in_out, ease_out_back
 
 # 30 fps, la cadence « en interaction » du §3. Le panneau n'est ouvert que
 # lorsque l'utilisateur s'en occupe, donc ce régime est le bon, et
@@ -92,6 +92,89 @@ class Tween:
     @property
     def target(self) -> float:
         return self._cible
+
+
+class Stagger:
+    """Entrées échelonnées : chaque élément part un cran après le précédent.
+
+    C'est le mécanisme qui remplace le fondu. Un panneau qui s'éclaircit d'un
+    bloc n'a pas de matière : tout y arrive en même temps, donc rien n'y a de
+    poids. Une cascade donne à chaque élément son instant, et l'œil suit la
+    séquence au lieu de subir un aplat qui change d'alpha.
+
+    Le décalage doit rester **court**. À 35 ms, six boutons s'installent en
+    175 ms de plus que le premier : on perçoit la vague, pas l'attente. Au-delà
+    de 60 ms on commence à attendre le dernier bouton, et une interface qu'on
+    attend est une interface lente, quelle que soit sa durée totale.
+
+    D'où `etalement`, qui plafonne la **durée totale** de la vague et non le
+    décalage d'un élément au suivant. Un décalage fixe se comporte bien à six
+    éléments et très mal à dix-huit : la page de personnalisation a douze
+    pastilles, et sa cascade durerait près d'une seconde. Le plafond resserre
+    le pas quand il y a foule, ce qui est exactement ce que fait l'œil — on ne
+    suit pas dix-huit arrivées, on voit un balayage.
+
+    La courbe par défaut dépasse — c'est tout l'intérêt. `value()` rend donc des
+    nombres supérieurs à 1 au milieu du mouvement, et les appelants qui ne
+    peuvent pas dépasser (une largeur de barre, une opacité) bornent chez eux.
+    """
+
+    __slots__ = ("_depart", "_t", "_fin", "_delai", "_duree", "_etalement",
+                 "_courbe")
+
+    def __init__(self, delai: float = 0.035, duree: float = 0.34,
+                 etalement: float = 0.17,
+                 courbe: Callable[[float], float] = ease_out_back) -> None:
+        self._depart: dict[str, float] = {}
+        self._t = 0.0
+        self._fin = 0.0
+        self._delai = float(delai)
+        self._duree = float(duree)
+        self._etalement = float(etalement)
+        self._courbe = courbe
+
+    def start(self, cles: Iterable[str]) -> None:
+        """(Re)lance la cascade dans cet ordre."""
+        cles = list(cles)
+        pas = self._delai
+        if len(cles) > 1:
+            pas = min(pas, self._etalement / (len(cles) - 1))
+        self._depart = {cle: i * pas for i, cle in enumerate(cles)}
+        self._t = 0.0
+        dernier = max(self._depart.values(), default=0.0)
+        self._fin = dernier + self._duree
+
+    def finish(self) -> None:
+        """Tout est en place, sans avoir animé. Pour un état initial."""
+        self._t = self._fin
+
+    def value(self, cle: str) -> float:
+        """Avancement de cet élément. Dépasse 1 au milieu du mouvement.
+
+        Une clé inconnue rend 1 : un élément qui apparaît en cours de vie du
+        panneau — une barre qui passe sous le seuil, un bouton qui se dégrise —
+        est **déjà en place**. Le faire entrer en cascade au milieu d'une page
+        établie donnerait un sursaut sans cause visible.
+        """
+        depart = self._depart.get(cle)
+        if depart is None:
+            return 1.0
+        u = (self._t - depart) / self._duree
+        if u <= 0.0:
+            return 0.0
+        if u >= 1.0:
+            return 1.0
+        return self._courbe(u)
+
+    def step(self, dt: float) -> bool:
+        if self._t >= self._fin:
+            return False
+        self._t = min(self._fin, self._t + dt)
+        return True
+
+    @property
+    def moving(self) -> bool:
+        return self._t < self._fin
 
 
 class SpringBank:
