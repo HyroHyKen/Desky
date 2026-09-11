@@ -1,0 +1,121 @@
+# Intégration continue : la suite de tests, sur Windows, à chaque poussée.
+#
+# **Pourquoi `windows-latest` et pas `ubuntu-latest`.** Desky ne cible que
+# Windows (CDC §1), et une partie de la suite touche des choses qui n'existent
+# pas ailleurs : `win32`, les sessions audio WASAPI, `%LOCALAPPDATA%`. Tester
+# sur Linux coûterait moins cher et ne dirait rien du produit livré.
+#
+# **Pourquoi Mesa.** `tests/test_render.py` rend réellement : il lui faut un
+# contexte OpenGL 3.3, et un runner GitHub n'a pas de GPU. `llvmpipe`, le
+# rasteriseur logiciel de Mesa, en fournit un — lent, mais conforme, ce qui est
+# tout ce qu'on lui demande ici. C'est la marche à suivre documentée par
+# ModernGL lui-même pour l'intégration continue.
+#
+# Le renderer utilisé en CI n'est donc *pas* celui des utilisateurs. Ces tests
+# valident la justesse du rendu, pas ses performances : les 30 fps du §3 se
+# mesurent sur une vraie machine, pas ici.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Une poussée annule la précédente sur la même branche : le seul résultat qui
+# compte est celui du dernier commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (Windows, Mesa llvmpipe)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # La version de développement. PySide6 et numpy publient des roues
+          # pour 3.12 ; ne pas laisser le runner choisir « la dernière ».
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # `release: false` réutilise le MSYS2 déjà présent sur l'image au lieu
+      # d'en télécharger un second (~200 Mo).
+      - name: Mesa (llvmpipe)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          release: false
+          install: mingw-w64-x86_64-mesa
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Suite de tests
+        shell: pwsh
+        env:
+          # Dit à `glcontext` — la couche que ModernGL utilise pour charger GL —
+          # d'ouvrir l'opengl32.dll de Mesa plutôt que celle du système, qui sur
+          # un runner ne propose qu'un GL 1.1 logiciel.
+          GLCONTEXT_WIN_LIBGL: C:\msys64\mingw64\bin\opengl32.dll
+          # Aucun display sur le runner : Qt doit rendre hors écran. Les tests
+          # d'interface instancient de vrais QWidget (cf. tests/qt_app.py).
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # MSYS2 pose son propre python.exe dans le PATH de MINGW64 ; il
+          # prendrait le pas sur celui de setup-python et n'a aucune de nos
+          # dépendances. Le retirer est la recommandation de ModernGL.
+          Remove-Item C:\msys64\mingw64\bin\python.exe -Force -ErrorAction SilentlyContinue
+          python -m unittest discover -s tests -t . -v
+
+  # Vérification à blanc de la chaîne de production, sur `main` seulement : elle
+  # prend plusieurs minutes et n'apporte rien sur une pull request de texte.
+  #
+  # Son intérêt est de faire échouer un `.spec` cassé *avant* le jour de la
+  # release, pas après le tag. Elle ne publie rien et ne signe rien.
+  build-check:
+    name: Gel à blanc (PyInstaller)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    needs: tests
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/requirements-build.txt
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+
+      # `--skip-icon` : l'icône est rendue par le moteur et exigerait un
+      # contexte GL. Elle est au dépôt, figée (`MASCOT_SEED`), et c'est bien
+      # ainsi — le visage du produit ne doit pas dépendre du rasteriseur du
+      # runner. Voir packaging/SIGNATURE.md.
+      #
+      # `--skip-installer` : Inno Setup est présent sur l'image, mais fabriquer
+      # un installateur qu'on jette n'apprend rien de plus que le gel lui-même,
+      # qui est l'étape fragile.
+      - name: Gel
+        run: python -m tools.build --skip-icon --skip-installer

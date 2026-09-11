@@ -1,0 +1,248 @@
+# Chaîne de livraison : d'un tag `vX.Y.Z` à une release GitHub publiée.
+#
+# Elle rejoue `tools/build.py`, qui reste la référence — ce fichier ne
+# reconstruit pas la logique de production, il l'appelle. Un développeur qui
+# lance `python -m tools.build` chez lui obtient le même installateur.
+#
+# Le gel est coupé en deux (`--skip-installer` puis `--skip-exe`) pour une
+# seule raison : la signature Authenticode doit toucher **les deux** binaires,
+# et celui de PyInstaller doit être signé *avant* qu'Inno Setup ne l'empaquète.
+# Signer l'installateur seul laisse un `Desky.exe` inconnu sur le disque de
+# l'utilisateur, que SmartScreen bloquera au premier lancement — c'est-à-dire
+# après l'installation, au pire moment.
+#
+# Sur la signature et ce que chacune des deux garantit : packaging/SIGNATURE.md.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publier:
+        description: "Publier la release (sinon : construire et attester seulement)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Construction, signature, publication
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: write       # créer la release et y téléverser l'installateur
+      id-token: write       # jeton OIDC échangé contre un certificat Fulcio
+      attestations: write   # dépôt de l'attestation Sigstore
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/requirements-build.txt
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+
+      # `pet/__init__.py` est la source unique du numéro de version — c'est déjà
+      # le parti pris de `tools/build.py` et de `desky.iss`. Le tag n'en est
+      # qu'un second exemplaire : on le confronte ici plutôt que de découvrir la
+      # divergence dans le nom du fichier livré.
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          numero="$(python -c "import pet; print(pet.VERSION.split('-')[0])")"
+          echo "numero=$numero"                >> "$GITHUB_OUTPUT"
+          echo "setup=Desky-$numero-setup.exe" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$numero" ]; then
+              echo "::error::Tag v$tag, mais pet.VERSION vaut $numero. Alignez les deux avant de retaguer."
+              exit 1
+            fi
+          fi
+          echo "Desky $numero"
+
+      # `tools.make_icon` rend l'icône avec le moteur, donc avec OpenGL, que le
+      # runner n'a pas. Elle est versionnée et figée par `MASCOT_SEED` : on la
+      # consomme telle quelle et on refuse de livrer si elle manque, plutôt que
+      # de laisser PyInstaller produire un exécutable à l'icône par défaut.
+      - name: Icône présente au dépôt
+        shell: bash
+        run: |
+          test -f packaging/desky.ico || {
+            echo "::error::packaging/desky.ico est absent. Régénérez-le localement (python -m tools.make_icon) et commitez-le."
+            exit 1
+          }
+
+      # `secrets` n'est pas lisible depuis un `if:` d'étape ; on en fait une
+      # sortie. Tant que le compte Azure Artifact Signing n'existe pas, les
+      # secrets sont vides, la signature est sautée et la release part **non
+      # signée** — ce que les notes de version écrivent noir sur blanc.
+      - name: Signature Authenticode configurée ?
+        id: authenticode
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SIGNING_ENDPOINT: ${{ secrets.SIGNING_ENDPOINT }}
+        run: |
+          if [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$SIGNING_ENDPOINT" ]; then
+            echo "active=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "active=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Aucun secret de signature : l'installateur sera livré non signé (CDC §15)."
+          fi
+
+      # --- Étape 1 : l'exécutable gelé --------------------------------------
+
+      - name: Exécutable (PyInstaller)
+        run: python -m tools.build --skip-icon --skip-installer
+
+      - name: Signature de Desky.exe
+        if: steps.authenticode.outputs.active == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.SIGNING_PROFILE }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # Seul le PE produit par PyInstaller est à nous. Les DLL de Qt et de
+          # Python arrivent déjà signées par leurs éditeurs ; les contresigner
+          # ne trompe personne et allonge le temps de signature d'autant.
+          files: ${{ github.workspace }}\dist\Desky\Desky.exe
+          file-digest: SHA256
+
+      # --- Étape 2 : l'installateur -----------------------------------------
+
+      - name: Installateur (Inno Setup)
+        run: python -m tools.build --skip-icon --skip-exe
+
+      - name: Signature de l'installateur
+        if: steps.authenticode.outputs.active == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ secrets.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.SIGNING_PROFILE }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          files: ${{ github.workspace }}\dist\${{ steps.version.outputs.setup }}
+          file-digest: SHA256
+
+      # --- Empreinte et provenance ------------------------------------------
+
+      - name: Empreinte SHA-256
+        shell: bash
+        working-directory: dist
+        run: sha256sum "${{ steps.version.outputs.setup }}" | tee SHA256SUMS.txt
+
+      # Sigstore. L'attestation lie l'**empreinte** de l'installateur au commit,
+      # au workflow et au tag qui l'ont produit, signée par un certificat
+      # éphémère Fulcio obtenu contre le jeton OIDC du job (d'où `id-token:
+      # write`), et consignée dans le journal public Rekor.
+      #
+      # Ce n'est pas une signature Authenticode et cela ne calme pas
+      # SmartScreen : les deux répondent à des questions différentes, et
+      # packaging/SIGNATURE.md explique laquelle.
+      - name: Attestation de provenance (Sigstore)
+        id: attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/${{ steps.version.outputs.setup }}
+
+      # L'attestation vit sur GitHub et `gh attestation verify` la retrouve
+      # seul. Le bundle est joint quand même : il rend la vérification possible
+      # hors ligne, et sans GitHub CLI.
+      - name: Conservation du bundle Sigstore
+        shell: bash
+        run: cp "${{ steps.attestation.outputs.bundle-path }}" "dist/${{ steps.version.outputs.setup }}.sigstore.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Desky-${{ steps.version.outputs.numero }}
+          path: |
+            dist/${{ steps.version.outputs.setup }}
+            dist/SHA256SUMS.txt
+            dist/${{ steps.version.outputs.setup }}.sigstore.json
+          retention-days: 30
+
+      # --- Publication -------------------------------------------------------
+
+      - name: Notes de version
+        if: github.ref_type == 'tag' || inputs.publier
+        shell: bash
+        env:
+          SETUP: ${{ steps.version.outputs.setup }}
+          SIGNE: ${{ steps.authenticode.outputs.active }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Installation"
+            echo
+            echo "Téléchargez \`$SETUP\` et lancez-le. L'installation est en **portée"
+            echo "utilisateur** : aucune élévation UAC, aucune écriture hors de votre profil."
+            echo
+            if [ "$SIGNE" != "true" ]; then
+              echo "> [!WARNING]"
+              echo "> Cette version n'est **pas signée Authenticode**. SmartScreen affichera"
+              echo "> « Windows a protégé votre ordinateur » ; le lien « Informations"
+              echo "> complémentaires » permet de poursuivre. Un poste géré par une"
+              echo "> entreprise peut refuser le fichier sans recours."
+              echo
+            fi
+            echo "## Vérifier le fichier"
+            echo
+            echo "L'installateur est accompagné d'une **attestation de provenance Sigstore**:"
+            echo "elle prouve que ce binaire précis a été produit par ce dépôt, par ce"
+            echo "workflow, depuis le commit \`${GITHUB_SHA:0:7}\` — et non réempaqueté"
+            echo "par un tiers."
+            echo
+            echo '```bash'
+            echo "gh attestation verify $SETUP --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo "Sans GitHub CLI, l'empreinte publiée dans \`SHA256SUMS.txt\` :"
+            echo
+            echo '```powershell'
+            echo "Get-FileHash $SETUP -Algorithm SHA256"
+            echo '```'
+          } > notes.md
+          cat notes.md
+
+      - name: Publication de la release
+        if: github.ref_type == 'tag' || inputs.publier
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          verif="--verify-tag"
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            tag="v${{ steps.version.outputs.numero }}"
+            verif=""
+          fi
+          gh release create "$tag" \
+            --title "Desky ${{ steps.version.outputs.numero }}" \
+            --notes-file notes.md \
+            $verif \
+            "dist/${{ steps.version.outputs.setup }}" \
+            "dist/SHA256SUMS.txt" \
+            "dist/${{ steps.version.outputs.setup }}.sigstore.json"

@@ -1,0 +1,11 @@
+# Dépendances de *production du binaire*, absentes de requirements.txt.
+#
+# Elles ne servent qu'au lot L8 : rien dans `pet/` ne les importe, et les
+# installer pour lancer l'application depuis les sources serait 40 Mo pour rien.
+# Les garder à part évite aussi qu'une mise à jour de PyInstaller ne casse
+# l'environnement de développement d'un contributeur qui ne construit jamais.
+#
+# Version figée, comme le reste : le gel est l'étape la moins déterministe de
+# la chaîne, et une release doit pouvoir être reconstruite à l'identique depuis
+# son tag.
+pyinstaller==6.22.2
