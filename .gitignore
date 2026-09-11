@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Environnement virtuel — recréé depuis requirements.txt
+.venv/
+venv/
+env/
+
+# ---------------------------------------------------------------------------
+# Packaging (lot L8)
+# ---------------------------------------------------------------------------
+# `build/` et `dist/` sont des sorties de PyInstaller et d'Inno Setup : le
+# dossier gelé, puis le `Desky-<version>-setup.exe`. Les *sources* du packaging
+# (packaging/desky.spec, desky.iss, desky.ico) restent suivies.
+/build/
+/dist/
+*.manifest
+
+# ---------------------------------------------------------------------------
+# Planches de contrôle produites par tools/
+# ---------------------------------------------------------------------------
+# Ces PNG sont regénérables (`python -m tools.face_sheet --out visages.png`)
+# et changent à chaque run : on les garde hors du dépôt. Seule la racine est
+# visée — les sprites de pet/assets/items/ sont des ressources embarquées et
+# doivent rester suivis.
+/*.png
+
+# ---------------------------------------------------------------------------
+# Données d'exécution
+# ---------------------------------------------------------------------------
+# Normalement sous %LOCALAPPDATA%\Desky\, mais un lancement de test peut les
+# déposer dans le dossier courant.
+/settings.json
+/pet.json
+/state.json
+*.log
+*.log.1
+
+# ---------------------------------------------------------------------------
+# Éditeurs et OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

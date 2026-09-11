@@ -1,0 +1,23 @@
+# Dépendances de Desky (CDC §4).
+#
+# Versions figées : ce sont celles sur lesquelles les mesures d'acceptation ont
+# été faites, et celles que reprendra le build du lot L8.
+
+# Lots L0 à L4 — fenêtre, rendu, géométrie, animation
+PySide6==6.11.2
+moderngl==5.12.0
+numpy==2.5.3
+
+# Lot L5 — capteurs système
+#
+# `psutil` donne le nom du process au premier plan (CDC §11). `pycaw` lit les
+# sessions audio WASAPI, et tire `comtypes` avec lui.
+#
+# Attention à la cadence : `AudioUtilities.GetAllSessions()` coûte 28,1 ms,
+# mesuré sur la machine de dev. Les sessions sont énumérées toutes les 8 s et
+# seuls leurs peak meters — 0,21 ms — sont lus à 4 Hz.
+psutil==7.2.2
+pycaw==20251023
+
+# Arrive plus tard, volontairement absent ici :
+#   pyinstaller  -> lot L8 (packaging)
