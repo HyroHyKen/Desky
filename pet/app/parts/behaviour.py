@@ -95,6 +95,10 @@ class BehaviourMixin:
         if plan.action != self._last_action:
             self._last_action = plan.action
             self._apply_plan(plan, pw)
+        else:
+            # L'action n'a pas changé, mais sa route a pu être abandonnée
+            # entre-temps. C'est ici qu'elle est reprise.
+            self._refresh_travel(plan, pw)
         self._plan = plan
         if self.animator is not None:
             self.animator.set_mood(self.brain.expression)
@@ -120,24 +124,41 @@ class BehaviourMixin:
         if plan.travel == "stop":
             loco.stop()
         elif plan.travel == "wander":
+            # Seul déplacement sans adresse : sa destination est tirée au sort,
+            # et la redemander en tirerait une autre. Il ne se redemande donc
+            # pas — voir `_refresh_travel`.
             loco.wander()
-        elif plan.travel == "home":
-            loco.go_home()
-        elif plan.travel == "cursor":
+        else:
+            cible = self._travel_target(plan, pw)
+            if cible is not None:
+                loco.go_to(cible)
+
+    def _travel_target(self, plan: Plan, pw: int) -> float | None:
+        """Destination du plan, ou `None` s'il n'en a pas de calculable.
+
+        Séparée de `_apply_plan` parce qu'elle est demandée **deux fois** : au
+        changement d'action, et à chaque tick tant que l'action dure. La seconde
+        est ce qui permet de reprendre une route abandonnée.
+        """
+        loco = self.locomotion
+        if loco is None:
+            return None
+
+        if plan.travel == "home":
+            return float(loco.home_x)
+        if plan.travel == "cursor":
             cx = float(self.sensors.cursor.position[0])
             gap = FOLLOW_GAP * pw
             # On s'arrête du côté d'où l'on vient, pour ne pas traverser le
             # curseur et le regarder de l'autre bord.
-            target = cx - gap if cx > self._me.x else cx + gap
-            loco.go_to(target)
-        elif plan.travel == "item":
-            if self.item is not None and not self.item.gone:
-                dpr = pw / max(1, self.width())
-                cible = self.item.center(dpr)[0]
-                # On s'arrête **sur** l'objet et non à côté : c'est le contact
-                # qui déclenche, contrairement au suivi du curseur.
-                loco.go_to(cible)
-        elif plan.travel == "edge":
+            return cx - gap if cx > self._me.x else cx + gap
+        if plan.travel == "item":
+            if self.item is None or self.item.gone:
+                return None
+            # On s'arrête **sur** l'objet et non à côté : c'est le contact qui
+            # déclenche, contrairement au suivi du curseur.
+            return self.item.center(pw / max(1, self.width()))[0]
+        if plan.travel == "edge":
             # Le bord de **son écran**, et non du terrain.
             #
             # Le §12 dit « fouine près du bord de l'écran », au singulier, et
@@ -156,7 +177,37 @@ class BehaviourMixin:
             inset = EDGE_INSET * pw
             middle = 0.5 * (low + high)
             cible = low + inset if self._me.x > middle else high - inset
-            loco.go_to(loco.terrain.clamp_x(cible))
+            return float(loco.terrain.clamp_x(cible))
+        return None
+
+    def _refresh_travel(self, plan: Plan, pw: int) -> None:
+        """Redemande la destination de l'action en cours, à chaque tick.
+
+        **Le défaut que ceci corrige.** `_apply_plan` n'était appelé qu'au
+        *changement* d'action. Or `_step_locomotion` rend la position à
+        l'utilisateur — et `yield_to_user` **annule la cible** — dès que le pet
+        est tiré, qu'il tombe, ou que le panneau est ouvert. Une route
+        abandonnée pendant que l'action durait n'était donc jamais reprise :
+        l'action restait élue, la locomotion restait sans cible, et le robot
+        regardait sa gamelle sans pouvoir l'atteindre jusqu'à ce qu'autre chose
+        le distraie.
+
+        Le cas du panneau l'a révélé parce qu'il dure, mais il est général :
+        attraper le pet en chemin l'arrêtait définitivement de la même façon.
+
+        `go_to` est fait pour être appelé en boucle — il refuse une cible trop
+        proche de la précédente, et refuse tout pendant le repos qui suit une
+        manipulation. Redemander ne coûte donc rien et ne bouscule rien.
+
+        La flânerie en est exclue : sa destination est tirée au sort, et la
+        redemander en tirerait une autre à chaque tick.
+        """
+        loco = self.locomotion
+        if loco is None or loco.travelling or plan.travel in ("stop", "wander"):
+            return
+        cible = self._travel_target(plan, pw)
+        if cible is not None:
+            loco.go_to(cible)
 
     def _step_bubble(self, dt: float, now: float) -> None:
         """Avance l'apparition de la bulle et l'affichage par les yeux.

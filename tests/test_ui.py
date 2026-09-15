@@ -2220,6 +2220,126 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         finally:
             w.shutdown()
 
+    def _boucle(self, w, secondes: float = 8.0, dt: float = 1.0 / 60.0) -> bool:
+        """Fait tourner les trois boucles du produit, au bon rythme chacune.
+
+        Locomotion et animation du panneau par image, comportement à 4 Hz. Ce
+        n'est pas du zèle : le défaut se joue **entre** ces cadences. Le
+        panneau cède la position à chaque image tant qu'il est ouvert, et le
+        `brain` n'élit `fetch_item` qu'au tick suivant l'apparition de l'objet —
+        c'est-à-dire pendant le repos que cette cession vient d'armer. Un test
+        qui laisserait le panneau se fermer avant de commencer ne verrait rien.
+
+        Rend `True` dès que la locomotion a une cible.
+        """
+        _, _, pw, ph = w._pet_rect()
+        t, prochain = 0.0, 0.0
+        while t < secondes:
+            if t >= prochain:
+                w._tick_brain(t)
+                prochain = t + 0.25
+            if w.panel is not None:
+                w.panel.step(dt)
+            w._step_locomotion(dt, t, pw, ph)
+            if w.locomotion is not None and w.locomotion.travelling:
+                return True
+            t += dt
+        return False
+
+    def _menu_ouvert(self, w, secondes: float = 1.5, dt: float = 1.0 / 60.0):
+        """Ouvre le menu et **fait tourner la boucle** pendant qu'il est ouvert.
+
+        Ce second point est ce qui manquait à la première version de ce test, et
+        c'est tout le défaut : `_step_locomotion` suspend le déplacement à
+        chaque image tant que le panneau est là. Un test qui ouvre le panneau
+        sans faire tourner la boucle n'arme rien, et voit un produit qui marche.
+        """
+        panneau = w._ensure_panel()
+        panneau.open_page("interactions")
+        panneau.open_panel()
+        _, _, pw, ph = w._pet_rect()
+        for _ in range(int(secondes / dt)):
+            panneau.step(dt)
+            w._step_locomotion(dt, 0.0, pw, ph)
+        return panneau
+
+    def test_le_robot_se_met_en_route_sans_faire_attendre(self) -> None:
+        """Le défaut complet, et il avait deux causes.
+
+        **Le repos de trop.** `_step_locomotion` appelait `yield_to_user` pour
+        le panneau ouvert comme pour un glisser, et cet appel arme deux
+        secondes et demie de repos — à chaque image. Demander à manger depuis le
+        menu laissait donc le robot planté deux secondes et demie après la
+        fermeture, alors que personne ne l'avait touché.
+
+        **L'unique tentative.** Pendant ce repos, `go_to` refuse la cible. Or
+        `_apply_plan` n'était appelé qu'au *changement* d'action : `fetch_item`
+        restait élue, la route n'était jamais redemandée, et le robot regardait
+        sa gamelle indéfiniment.
+
+        La borne d'une seconde est le critère : elle échoue sur la première
+        cause comme sur la seconde.
+        """
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            panneau = self._menu_ouvert(w)
+
+            w._on_care("feed")
+            self.assertIsNotNone(w.item)
+            self.assertTrue(panneau.closing)
+
+            self.assertTrue(self._boucle(w, secondes=1.0),
+                            "le robot ne part pas chercher son objet")
+            _, _, pw, _ = w._pet_rect()
+            vise = w.locomotion.target_x
+            objet = w.item.center(pw / max(1, w.width()))[0]
+            self.assertLess(abs(vise - objet), pw,
+                            "il part, mais pas vers son objet")
+        finally:
+            w.shutdown()
+
+    def test_un_panneau_ouvert_n_arme_aucun_repos(self) -> None:
+        """Le panneau n'a pas touché au robot : rien ne justifie de le faire
+        patienter une fois refermé. Le repos reste pour les manipulations."""
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            self._menu_ouvert(w)
+            self.assertEqual(w.locomotion.cooldown, 0.0)
+
+            w._dragging = True
+            _, _, pw, ph = w._pet_rect()
+            w._step_locomotion(1.0 / 60.0, 0.0, pw, ph)
+            self.assertGreater(w.locomotion.cooldown, 0.0,
+                               "un glisser doit encore faire souffler le robot")
+        finally:
+            w.shutdown()
+
+    def test_attraper_le_pet_en_chemin_ne_l_arrete_pas_definitivement(self) -> None:
+        """La forme générale du même défaut : une route abandonnée pendant que
+        l'action dure doit être reprise, quelle qu'en soit la cause."""
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            w._on_care("feed")
+            self.assertTrue(self._boucle(w), "il n'est jamais parti")
+
+            # On l'attrape : la locomotion cède et oublie sa cible.
+            w._dragging = True
+            _, _, pw, ph = w._pet_rect()
+            w._step_locomotion(1.0 / 60.0, 0.0, pw, ph)
+            self.assertFalse(w.locomotion.travelling)
+
+            w._dragging = False
+            self.assertTrue(self._boucle(w),
+                            "lâché, il reste planté au lieu de repartir")
+        finally:
+            w.shutdown()
+
     def test_une_caresse_ne_ferme_pas_le_panneau(self) -> None:
         """Elle agit tout de suite et ne pose rien sur le bureau : il n'y a
         aucune raison de renvoyer l'utilisateur hors du menu."""

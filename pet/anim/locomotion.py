@@ -342,10 +342,32 @@ class Locomotion:
         self.stop()
 
     def yield_to_user(self, x: float) -> None:
-        """L'utilisateur a pris la main : on abandonne la cible et on attend."""
+        """L'utilisateur a pris la main : on abandonne la cible et on attend.
+
+        Le repos qui suit est le point : un pet qu'on vient de reposer ne doit
+        pas repartir dans la seconde, il aurait l'air de fuir la main. Réservé
+        aux vraies **manipulations** — glisser, chute. Voir `hold` pour le
+        reste.
+        """
         self.x = self.terrain.clamp_x(x)
         self.stop()
         self.cooldown = USER_COOLDOWN
+
+    def hold(self, x: float) -> None:
+        """Suspend le déplacement, **sans** armer le repos.
+
+        Pour ce qui empêche de marcher sans avoir touché au robot : un panneau
+        ouvert au-dessus de sa tête, une scène d'arrivée qui pilote sa position.
+        Ces situations-là finissent, et rien ne justifie de faire attendre deux
+        secondes et demie de plus une fois qu'elles ont fini.
+
+        La distinction n'est pas théorique : le panneau armait le repos à chaque
+        image, si bien que demander à manger depuis le menu faisait patienter le
+        robot deux secondes et demie avant qu'il ne daigne aller chercher sa
+        gamelle — quand il y allait.
+        """
+        self.x = self.terrain.clamp_x(x)
+        self.stop()
 
     def stop(self) -> None:
         self.target_x = None

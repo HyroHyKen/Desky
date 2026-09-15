@@ -754,9 +754,17 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
 
         # Propriété de la position : le glisser, la chute, le panneau ouvert et
         # la scène d'arrivée l'emportent tous sur la locomotion.
-        if (self._dragging or self._falling or self.panel_open
-                or self._intro_phase in INTRO_SCRIPTED):
-            loco.yield_to_user(self._x + pw / 2.0)
+        #
+        # Deux traitements, et pas un seul. Une **manipulation** — glisser,
+        # chute — arme le repos : un pet qu'on vient de reposer ne repart pas
+        # dans la seconde. Un **empêchement** — panneau ouvert, scène d'arrivée
+        # — n'a pas touché au robot et ne justifie aucun délai une fois levé.
+        centre = self._x + pw / 2.0
+        if self._dragging or self._falling:
+            loco.yield_to_user(centre)
+            return
+        if self.panel_open or self._intro_phase in INTRO_SCRIPTED:
+            loco.hold(centre)
             return
 
         self._loco_channels = loco.update(dt)
