@@ -32,6 +32,7 @@ from PySide6.QtWidgets import QLineEdit, QToolTip, QWidget
 
 from ..anim.easing import ease_in, ease_out_back
 from ..brain.economy import DAILY_CAP
+from ..brain.consumables import AISLES, by_need, get as consumable
 from ..brain.needs import NEEDS
 from ..feedback import bus
 from ..geometry.cosmetics import NONE, SLOTS, by_slot, price as cosmetic_price
@@ -136,6 +137,30 @@ PRESS_SPRING = (34.0, 0.55)          # omega, zeta — vif, et il dépasse
 HOVER_SPRING = (26.0, 0.85)          # plus calme, presque sans dépassement
 
 
+def _icone_article(article) -> str:
+    """Icône d'un consommable : celle du besoin qu'il sert.
+
+    Pas d'icône par article, et c'est assumé : une gamelle et un en-cas servent
+    la même chose, et deux pictogrammes proches à seize pixels se distinguent
+    moins bien qu'un seul à deux tailles. La portion est dite par la **taille**
+    du dessin (cf. `_echelle_article`), le prix et la quantité par les chiffres
+    qui l'accompagnent.
+    """
+    return article.need
+
+
+def _echelle_article(action: str) -> float:
+    """Part du bouton qu'occupe l'icône : plus l'article rend, plus elle est
+    grande. C'est ce qui sépare visuellement l'en-cas du repas."""
+    cle = action.split(":", 1)[-1]
+    article = consumable(cle)
+    if article is None:
+        return 0.56
+    if article.instant:
+        return 0.62
+    return 0.40 + 0.22 * min(1.0, article.gain / 60.0)
+
+
 def _melange(a: QColor, b: QColor, t: float) -> QColor:
     """Interpole deux couleurs.
 
@@ -181,9 +206,16 @@ BAR_LOW_LEVEL = 45.0
 
 # Une page de rayon par emplacement, **dérivée** de la liste des emplacements :
 # ajouter une famille d'articles ajoute sa page sans qu'on y touche.
-SHOP_PAGES: tuple[str, ...] = tuple("shop_" + s for s in SLOTS)
+# Rayons de la boutique : les cosmétiques par emplacement, puis les
+# consommables par besoin. Dérivés des deux catalogues, donc ajouter un article
+# le range sans qu'on touche à cette ligne.
+SHOP_PAGES: tuple[str, ...] = (tuple("shop_" + s for s in SLOTS)
+                               + tuple("shop_" + a for a in AISLES))
 
-PAGES = ("menu", "status", "interactions", "games", "custom", "shop") + SHOP_PAGES + (
+# `interactions` a disparu au lot L13 : des quatre soins il ne restait que la
+# caresse, et une page pour un seul bouton est une page de trop — elle est
+# remontée au menu racine.
+PAGES = ("menu", "status", "games", "inventory", "custom", "shop") + SHOP_PAGES + (
     "settings", "name")
 
 # ---------------------------------------------------------------------------
@@ -210,15 +242,23 @@ SLOT_LABELS: dict[str, str] = {
     "moustache": "Moustaches",
 }
 
+# Rayons de consommables, par besoin servi.
+AISLE_LABELS: dict[str, str] = {
+    "hunger": "Nourriture",
+    "hygiene": "Nettoyage",
+    "energy": "Énergie",
+}
+
 PAGE_TITLES: dict[str, str] = {
-    "interactions": "Interactions",
     "games": "Jeux",
+    "inventory": "Inventaire",
     "custom": "Apparence",
     "shop": "Boutique",
     "settings": "Réglages",
     "name": "Quel est mon nom ?",
 }
 PAGE_TITLES.update({"shop_" + s: SLOT_LABELS.get(s, s) for s in SLOTS})
+PAGE_TITLES.update({"shop_" + a: AISLE_LABELS.get(a, a) for a in AISLES})
 
 # Infobulle de chaque bouton. C'est ici que les pictogrammes obscurs se
 # rattrapent : une grille de quatre carrés ne dit pas « interactions », et une
@@ -227,7 +267,8 @@ PAGE_TITLES.update({"shop_" + s: SLOT_LABELS.get(s, s) for s in SLOTS})
 TOOLTIPS: dict[str, str] = {
     # Navigation
     "status": "Voir son état",
-    "interactions": "S'occuper de lui",
+    "pet": "Le caresser",
+    "inventory": "Inventaire",
     "custom": "Changer son apparence",
     "games": "Jouer avec lui",
     "shop": "Boutique",
@@ -271,6 +312,18 @@ ITEM_LABELS: dict[str, str] = {
 }
 TOOLTIP_CATEGORY = "Voir les %s"
 
+# Consommables. Le libellé dit ce que c'est, l'infobulle ce que ça fait : à
+# l'achat on veut comparer, à l'usage on veut se rappeler.
+CONSUMABLE_LABELS: dict[str, str] = {
+    "snack": "En-cas",
+    "meal": "Repas",
+    "wipe": "Lingette",
+    "soap": "Savon",
+    "battery": "Pile",
+}
+TOOLTIP_BUY = "%s — %d jetons"
+TOOLTIP_USE = "%s — il en reste %d"
+
 # Hauteur de la bande de titre, et sa police.
 TITLE_H = 32
 TITLE_SIZE = 18
@@ -302,7 +355,10 @@ TITLE_TIGHT_PAGES: frozenset[str] = frozenset({"status", "shop"}) | frozenset(SH
 # deux rangées. La largeur du panneau, elle, ne bouge pas — un panneau qui
 # respire en changeant de page est fatigant, et c'est déjà pourquoi toutes les
 # pages se conforment à six colonnes.
-MENU_ACTIONS = ("status", "interactions", "games", "custom", "shop",
+# `pet` — la caresse — est **dans le menu**, pas dans une sous-page : c'est le
+# geste qu'on fait en passant, le seul qui ne coûte rien, et l'enterrer sous une
+# navigation le rendrait plus cher que ce qu'il vaut.
+MENU_ACTIONS = ("status", "pet", "games", "inventory", "custom", "shop",
                 "settings", "quit")
 
 # Actions qui exigent un appui maintenu. La seule pour l'instant, et la seule
@@ -359,6 +415,10 @@ class Layout:
     big_icon: str = ""
     tokens: int = -1            # solde affiché, -1 pour ne rien montrer
     title: str = ""
+    # Quantités à afficher en pastille sur un bouton, `action -> nombre`.
+    # Utilisé par l'inventaire, où savoir **combien** il en reste est la seule
+    # information qui compte.
+    counts: dict = field(default_factory=dict)
     # Scores à afficher, `(jeu, record, dernier)`. `dernier` vaut -1 quand
     # aucune partie n'a été jouée dans cette session. Vide hors de la page des
     # jeux — c'est le seul endroit où un score a un sens.
@@ -376,6 +436,8 @@ class CarePanel(QWidget):
     reset_requested = Signal()
     autostart_toggled = Signal()
     game_requested = Signal(str)
+    purchase_requested = Signal(str)
+    consumable_used = Signal(str)
 
     def __init__(self, session, genome: dict | None = None,
                  parent: QWidget | None = None) -> None:
@@ -690,8 +752,53 @@ class CarePanel(QWidget):
         layout = Layout(height=int(y + BUTTON + GAP + BUTTON + PAD),
                         tokens=self.session.tokens,
                         title=PAGE_TITLES.get("shop", ""))
-        layout.buttons = self._row(tuple("shop_" + s for s in SLOTS), y)
+        # Consommables d'abord : c'est ce qu'on vient chercher le plus souvent,
+        # et un rayon de chapeaux placé devant la nourriture dirait mal ce que
+        # la boutique sert désormais.
+        rayons = tuple("shop_" + a for a in AISLES) + tuple("shop_" + s for s in SLOTS)
+        layout.buttons = self._row(rayons[:MENU_COLUMNS], y)
+        reste = rayons[MENU_COLUMNS:]
+        if reste:
+            layout.buttons += self._row(reste, y + BUTTON + GAP)
+            y += BUTTON + GAP
         layout.buttons += self._row(("back",), y + BUTTON + GAP)
+        layout.height = int(y + 2 * BUTTON + 2 * GAP + PAD)
+        return layout
+
+    def _shop_aisle_layout(self, need: str) -> Layout:
+        """Un rayon de consommables : les articles, leur prix, ce qu'on en a.
+
+        À la différence des cosmétiques, **on peut racheter** : un article déjà
+        possédé n'est pas grisé, il affiche seulement combien on en a. C'est la
+        distinction qui a justifié une seconde structure de stockage — posséder
+        un chapeau est un état, posséder trois gamelles est une quantité.
+        """
+        solde = self.session.tokens
+        articles = by_need(need)
+        layout = Layout(height=0, tokens=solde,
+                        title=PAGE_TITLES.get("shop_" + need, ""))
+
+        y = self._top() + HEADER + BAR_GAP
+        total = SHOP_COLUMNS * TILE + (SHOP_COLUMNS - 1) * TILE_GAP
+        for index, article in enumerate(articles):
+            colonne = index % SHOP_COLUMNS
+            rangee = index // SHOP_COLUMNS
+            x = (WIDTH - total) / 2.0 + colonne * (TILE + TILE_GAP)
+            layout.buttons.append(Button(
+                QRectF(x, y + rangee * (TILE + TILE_LABEL + TILE_GAP),
+                       TILE, TILE),
+                _icone_article(article), "buy:" + article.key,
+                enabled=solde >= article.price,
+                price=article.price,
+            ))
+            possede = self.session.count(article.key)
+            if possede:
+                layout.counts["buy:" + article.key] = possede
+
+        lignes = (len(articles) + SHOP_COLUMNS - 1) // SHOP_COLUMNS
+        bas = y + lignes * (TILE + TILE_LABEL + TILE_GAP)
+        layout.buttons += self._row(("back",), bas)
+        layout.height = int(bas + BUTTON + PAD)
         return layout
 
     def _shop_slot_layout(self, slot: str) -> Layout:
@@ -786,10 +893,17 @@ class CarePanel(QWidget):
             hauteur = haut + BUTTON + PAD
             if seconde:
                 hauteur += BUTTON + GAP
+            # La caresse est au menu depuis le lot L13, et elle garde son
+            # délai : il faut donc que le menu sache la griser. C'est le seul
+            # bouton de navigation qui puisse être indisponible.
+            def offert(action: str) -> bool:
+                return action != "pet" or brain.can_care("pet")
+
             layout = Layout(height=hauteur, title=nom)
-            layout.buttons = self._row(premiere, haut)
+            layout.buttons = self._row(premiere, haut, enabled=offert)
             if seconde:
-                layout.buttons += self._row(seconde, haut + BUTTON + GAP)
+                layout.buttons += self._row(seconde, haut + BUTTON + GAP,
+                                            enabled=offert)
             return layout
 
         if self.page == "status":
@@ -802,16 +916,36 @@ class CarePanel(QWidget):
                                        hauteur - PAD - BUTTON)
             return layout
 
-        if self.page == "interactions":
-            hauteur = haut + BUTTON + GAP + BUTTON + PAD
+        if self.page == "inventory":
+            # Ce qu'on possède, et rien d'autre : un inventaire qui montrerait
+            # aussi ce qu'on n'a pas serait une seconde boutique, et la boutique
+            # existe déjà. Vide, la page le dit par une grande icône pâle plutôt
+            # que par une rangée de cases grises.
+            stock = sorted(self.session.consumables.items())
+            hauteur = haut + BUTTON + PAD
+            if stock:
+                hauteur += BUTTON + GAP
             layout = Layout(height=hauteur, title=titre)
 
-            def offert(action: str) -> bool:
-                if self.item_pending and action in ITEM_KINDS:
-                    return False
-                return brain.can_care(action)
+            if not stock:
+                layout.big_icon = "inventory"
+                layout.buttons = self._row(("back",), haut)
+                return layout
 
-            layout.buttons = self._row(CARE_ACTIONS, haut, enabled=offert)
+            def dispo(action: str) -> bool:
+                # Un objet est déjà posé sur le bureau : tout ce qui s'y pose
+                # est indisponible, la pile reste utilisable.
+                cle = action[len("use:"):]
+                article = consumable(cle)
+                return bool(article and (article.instant or not self.item_pending))
+
+            actions = tuple("use:" + cle for cle, _ in stock)
+            layout.buttons = self._row(actions, haut, enabled=dispo)
+            for bouton in layout.buttons:
+                article = consumable(bouton.action[len("use:"):])
+                if article is not None:
+                    bouton.icon = _icone_article(article)
+            layout.counts = {"use:" + cle: n for cle, n in stock}
             layout.buttons += self._row(("back",), haut + BUTTON + GAP)
             return layout
 
@@ -834,7 +968,10 @@ class CarePanel(QWidget):
             return self._shop_root_layout()
 
         if self.page in SHOP_PAGES:
-            return self._shop_slot_layout(self.page[len("shop_"):])
+            rayon = self.page[len("shop_"):]
+            if rayon in AISLES:
+                return self._shop_aisle_layout(rayon)
+            return self._shop_slot_layout(rayon)
 
         if self.page == "games":
             # Une ligne par jeu : le titre, le record, le bouton. Un seul jeu
@@ -973,6 +1110,13 @@ class CarePanel(QWidget):
             if transforme:
                 painter.restore()
             self._entree_fin(painter, entree)
+
+        # Les pastilles de quantité **après** les boutons : peintes avant, les
+        # boutons les recouvraient purement et simplement. Elles débordent du
+        # coin, ce qui est précisément ce qu'on veut — une pastille contenue
+        # dans le bouton se lit comme une partie du pictogramme.
+        for action, nombre in layout.counts.items():
+            self._paint_count(painter, layout, action, nombre)
         painter.end()
 
     def _paint_header(self, painter: QPainter, layout: Layout) -> None:
@@ -1026,6 +1170,32 @@ class CarePanel(QWidget):
             painter.setBrush(BAR_LOW if value < BAR_LOW_LEVEL else BAR_FILL)
             painter.drawRoundedRect(QRectF(x, y, remplie, BAR_HEIGHT),
                                     BAR_HEIGHT / 2.0, BAR_HEIGHT / 2.0)
+
+    def _paint_count(self, painter: QPainter, layout: Layout,
+                     action: str, nombre: int) -> None:
+        """Quantité possédée, en pastille sur le coin du bouton.
+
+        En chiffres, comme le solde et les scores : « il t'en reste trois » ne
+        se dit pas en pictogrammes, et trois petits points deviendraient
+        illisibles à cinq. C'est la troisième et dernière entorse assumée à la
+        règle du sans-texte.
+        """
+        bouton = next((b for b in layout.buttons if b.action == action), None)
+        if bouton is None or nombre <= 0:
+            return
+        cote = 19.0
+        pastille = QRectF(bouton.rect.right() - cote * 0.70,
+                          bouton.rect.top() - cote * 0.26, cote, cote)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ACCENT if bouton.enabled else INK_OFF)
+        painter.drawEllipse(pastille)
+
+        font = QFont()
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(pastille, int(Qt.AlignmentFlag.AlignCenter), str(nombre))
 
     def _paint_score(self, painter: QPainter, layout: Layout, jeu: str,
                      record: int, dernier: int = -1) -> None:
@@ -1166,6 +1336,11 @@ class CarePanel(QWidget):
         painter.setBrush(fond)
         painter.drawRoundedRect(button.rect, RADIUS, RADIUS)
 
+        if button.action.startswith("buy:"):
+            draw_icon(painter, button.icon,
+                      center_square(button.rect, _echelle_article(button.action)),
+                      INK if button.enabled else INK_OFF)
+
         apercu = button.preview
         if apercu is not None and not apercu.isNull():
             cible = button.rect.adjusted(3, 3, -3, -3)
@@ -1228,7 +1403,11 @@ class CarePanel(QWidget):
         if button.swatch:
             self._paint_swatch(painter, button, hover)
             return
-        if button.action.startswith("cos:"):
+        if button.action.startswith(("cos:", "buy:")):
+            # Les deux sont des **vignettes de rayon** : un dessin, un prix
+            # dessous. Le prix est la moitié de l'information d'une boutique, et
+            # le reléguer à l'infobulle obligerait à survoler chaque article
+            # pour comparer deux gamelles.
             self._paint_tile(painter, button, hover)
             return
         painter.setPen(Qt.PenStyle.NoPen)
@@ -1243,7 +1422,10 @@ class CarePanel(QWidget):
             encre = INK
         painter.setBrush(fond)
         painter.drawRoundedRect(button.rect, RADIUS, RADIUS)
-        draw_icon(painter, button.icon, center_square(button.rect), encre)
+        facteur = (_echelle_article(button.action)
+                   if button.action.startswith(("use:", "buy:")) else 1.0)
+        draw_icon(painter, button.icon,
+                  center_square(button.rect, facteur), encre)
 
     # -- interaction -------------------------------------------------------
 
@@ -1265,8 +1447,9 @@ class CarePanel(QWidget):
         action = button.action
         if action.startswith("shop_"):
             emplacement = action[len("shop_"):]
-            return TOOLTIP_CATEGORY % SLOT_LABELS.get(
-                emplacement, emplacement).lower()
+            nom = SLOT_LABELS.get(emplacement) or AISLE_LABELS.get(
+                emplacement, emplacement)
+            return TOOLTIP_CATEGORY % nom.lower()
         if action.startswith("cos:"):
             cle = action.split(":", 2)[2]
             if not cle:
@@ -1277,6 +1460,13 @@ class CarePanel(QWidget):
             if button.price >= 0:
                 return TOOLTIP_HAT_BUY % (nom, button.price)
             return TOOLTIP_HAT_WEAR % nom
+        if action.startswith("buy:"):
+            cle = action[len("buy:"):]
+            return TOOLTIP_BUY % (CONSUMABLE_LABELS.get(cle, cle), button.price)
+        if action.startswith("use:"):
+            cle = action[len("use:"):]
+            return TOOLTIP_USE % (CONSUMABLE_LABELS.get(cle, cle),
+                                  self.session.count(cle))
         if "=" in action:
             return TOOLTIP_SWATCH % action.split("=", 1)[1].replace("-", " ")
         return TOOLTIPS.get(action, "")
@@ -1404,6 +1594,17 @@ class CarePanel(QWidget):
             self.item_chosen.emit(emplacement, cle)
             self.update()
             return
+        if action.startswith("buy:"):
+            self.purchase_requested.emit(action[len("buy:"):])
+            self.update()
+            return
+        if action.startswith("use:"):
+            self.consumable_used.emit(action[len("use:"):])
+            return
+        if action in CARE_ACTIONS:
+            self.care_requested.emit(action)
+            self.update()
+            return
         if action in GAME_ACTIONS:
             self.game_requested.emit(action)
             self.close_panel()
@@ -1413,9 +1614,6 @@ class CarePanel(QWidget):
             bus.emit("reglage_bascule", reglage="autostart")
             self.update()
             return
-        if action in CARE_ACTIONS:
-            self.care_requested.emit(action)
-            self.update()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 (API Qt)
         if event.key() == Qt.Key.Key_Escape:

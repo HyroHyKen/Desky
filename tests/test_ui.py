@@ -253,9 +253,13 @@ class _FauxSession:
         self.tokens = 0
         self.tokens_remaining = 25
         self.best_scores = {}
+        self.consumables = {}
 
     def best_score(self, jeu: str) -> int:
         return int(self.best_scores.get(jeu, 0))
+
+    def count(self, key: str) -> int:
+        return int(self.consumables.get(key, 0))
 
 
 class PanelTest(unittest.TestCase):
@@ -279,7 +283,7 @@ class PanelTest(unittest.TestCase):
         panel.open_page("menu")
         actions = [b.action for b in panel._layout().buttons]
         self.assertEqual(actions, list(MENU_ACTIONS))
-        for demandee in ("status", "interactions", "shop", "quit"):
+        for demandee in ("status", "pet", "games", "inventory", "shop", "quit"):
             self.assertIn(demandee, actions)
 
     def test_chaque_page_a_un_retour(self) -> None:
@@ -359,15 +363,17 @@ class PanelTest(unittest.TestCase):
     def test_un_soin_en_delai_est_grise(self) -> None:
         from pet.brain.needs import Needs
 
-        panel, brain = self._panel(Needs(hunger=10.0))
-        panel.open_page("interactions")
+        # La caresse est le seul soin qui ait encore un délai, et elle est
+        # désormais au menu racine.
+        panel, brain = self._panel(Needs(fun=10.0))
+        panel.open_page("menu")
         avant = {b.action: b.enabled for b in panel._layout().buttons}
-        self.assertTrue(avant["feed"])
+        self.assertTrue(avant["pet"])
 
-        brain.care("feed")
+        brain.care("pet")
         apres = {b.action: b.enabled for b in panel._layout().buttons}
-        self.assertFalse(apres["feed"], "le délai n'a pas grisé le bouton")
-        self.assertTrue(apres["clean"], "les autres soins restent offerts")
+        self.assertFalse(apres["pet"], "le délai n'a pas grisé le bouton")
+        self.assertTrue(apres["games"], "la navigation reste ouverte")
 
     def test_un_bouton_grise_ne_repond_pas(self) -> None:
         from pet.brain.needs import Needs
@@ -723,11 +729,12 @@ class PanelMotionTest(unittest.TestCase):
         se jouer — c'est la transition de page qui fait office de retour. Seuls
         les boutons qui restent peuvent s'enfoncer et rebondir.
         """
-        panel.open_page("interactions")
+        panel.session.consumables = {"meal": 2, "wipe": 1}
+        panel.open_page("inventory")
         for bouton in panel._layout().buttons:
-            if bouton.enabled and bouton.action not in ("back",):
+            if bouton.enabled and bouton.action.startswith("use:"):
                 return bouton
-        self.skipTest("aucun soin disponible sur cette page")
+        self.skipTest("aucun article disponible")
 
     def test_l_appui_enfonce_le_bouton(self) -> None:
         panel = self._panel()
@@ -851,8 +858,9 @@ class PanelMotionTest(unittest.TestCase):
         # Un objet de soin traîne déjà sur le bureau : les trois soins qui en
         # produisent un se grisent ensemble. C'est la façon la plus sûre
         # d'obtenir un bouton désactivé sans dépendre des délais du brain.
+        panel.session.consumables = {"meal": 1, "wipe": 1}
         panel.item_pending = True
-        panel.open_page("interactions")
+        panel.open_page("inventory")
         panel.open_panel()
         _settle(panel)
 
@@ -929,7 +937,7 @@ class PanelMotionTest(unittest.TestCase):
         _settle(panel)
         self.assertFalse(panel._entree.moving)
 
-        panel.open_page("interactions")
+        panel.open_page("games")
         self.assertTrue(panel._entree.moving, "la page a été substituée d'un coup")
 
     def test_changer_de_page_panneau_ferme_n_anime_rien(self) -> None:
@@ -1996,15 +2004,26 @@ class UnboxingFallTest(unittest.TestCase):
 class ItemCatalogueTest(unittest.TestCase):
     """Découverte des sprites, et variété des repas."""
 
-    def test_seuls_trois_soins_passent_par_un_objet(self) -> None:
-        """Une caresse ne s'apporte pas : elle reste un bouton direct."""
+    def test_seuls_les_consommables_passent_par_un_objet(self) -> None:
+        """Une caresse ne s'apporte pas, une pile non plus.
+
+        La caresse est un geste direct, et la pile s'applique sur-le-champ : la
+        faire traverser l'écran serait une comédie sans intérêt, et on l'utilise
+        précisément quand le robot est trop épuisé pour marcher.
+        """
+        from pet.brain.consumables import CONSUMABLES
         from pet.brain.needs import CARE_GAINS
         from pet.ui.item import ITEM_KINDS
 
-        self.assertEqual(set(ITEM_KINDS), {"feed", "play", "clean"})
+        self.assertEqual(set(ITEM_KINDS), {"feed", "clean"})
         self.assertNotIn("pet", ITEM_KINDS)
-        for kind in ITEM_KINDS:
-            self.assertIn(kind, CARE_GAINS)
+        for article in CONSUMABLES:
+            if article.instant:
+                continue
+            self.assertIn(article.kind, ITEM_KINDS,
+                          article.key + " se pose sans sprite")
+        self.assertEqual(set(CARE_GAINS), {"pet"},
+                         "un soin gratuit a survécu à la migration")
 
     def test_chaque_soin_a_au_moins_un_sprite_livre(self) -> None:
         from pet.ui.item import ITEM_KINDS, available_sprites
@@ -2113,45 +2132,87 @@ class ItemWindowTest(unittest.TestCase):
         self.assertFalse(item.opaque_at(1e6, 1e6))
 
 
-class CareInTwoStepsTest(unittest.TestCase):
-    """Réserver un soin et le délivrer sont deux gestes distincts."""
+class ConsumableInTwoStepsTest(unittest.TestCase):
+    """Sortir un article du stock et l'appliquer sont deux gestes distincts.
 
-    def _brain(self):
+    C'était déjà vrai des soins par objet avant le lot L13, sous forme de
+    délais : réserver posait le compte à rebours, livrer donnait le gain. Le
+    mécanisme a changé — une quantité au lieu d'un délai — mais la propriété
+    est la même, et pour la même raison : l'article quitte le stock quand on le
+    **pose**, sinon un seul exemplaire en sèmerait dix.
+    """
+
+    def setUp(self) -> None:
+        import os
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("LOCALAPPDATA")
+        os.environ["LOCALAPPDATA"] = self._dir.name
+
+    def tearDown(self) -> None:
+        import os
+        if self._old is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = self._old
+        self._dir.cleanup()
+
+    def _session(self, stock: int = 2):
+        from pet.brain.session import Session
+
+        s = Session()
+        s.load()
+        s.economy.tokens = 50
+        s.buy_consumable("meal", stock)
+        s.brain.needs.hunger = 10.0
+        return s
+
+    def test_sortir_du_stock_ne_donne_pas_le_gain(self) -> None:
+        s = self._session()
+        self.assertTrue(s.use_consumable("meal"))
+        self.assertEqual(s.count("meal"), 1)
+        self.assertEqual(s.brain.needs.hunger, 10.0,
+                         "le gain est arrivé trop tôt")
+
+    def test_appliquer_donne_le_gain(self) -> None:
+        s = self._session()
+        s.use_consumable("meal")
+        applied = s.apply_consumable("meal")
+        self.assertIn("hunger", applied)
+        self.assertGreater(s.brain.needs.hunger, 10.0)
+
+    def test_on_ne_pose_pas_plus_qu_on_ne_possede(self) -> None:
+        """Sans quoi rien n'empêcherait de semer dix gamelles."""
+        s = self._session(stock=1)
+        self.assertTrue(s.use_consumable("meal"))
+        self.assertFalse(s.use_consumable("meal"))
+
+    def test_le_remboursement_rend_l_article(self) -> None:
+        """Un objet jamais rejoint ne doit pas être facturé (§12)."""
+        s = self._session(stock=1)
+        s.use_consumable("meal")
+        s.refund_consumable("meal")
+        self.assertEqual(s.count("meal"), 1)
+        self.assertEqual(s.brain.needs.hunger, 10.0)
+
+    def test_la_pile_fait_les_deux_d_un_coup(self) -> None:
+        """Elle ne se pose pas sur le bureau : on l'utilise précisément quand
+        le robot est trop épuisé pour aller la chercher."""
+        from pet.brain.consumables import get
+
+        s = self._session()
+        s.buy_consumable("battery")
+        s.brain.needs.energy = 5.0
+        self.assertTrue(get("battery").instant)
+        s.use_consumable("battery")
+        s.apply_consumable("battery")
+        self.assertEqual(s.brain.needs.energy, 100.0)
+
+    def test_la_caresse_reste_un_soin_gratuit(self) -> None:
         from pet.brain.brain import Brain
         from pet.brain.needs import Needs
 
-        return Brain(Needs(hunger=10.0, fun=10.0, energy=50.0, hygiene=10.0))
-
-    def test_reserver_pose_le_delai_sans_donner_le_gain(self) -> None:
-        brain = self._brain()
-        self.assertTrue(brain.start_care("feed"))
-        self.assertEqual(brain.needs.hunger, 10.0, "le gain est arrivé trop tôt")
-        self.assertFalse(brain.can_care("feed"), "le délai n'a pas été posé")
-
-    def test_delivrer_applique_le_gain(self) -> None:
-        brain = self._brain()
-        brain.start_care("feed")
-        applied = brain.deliver_care("feed")
-        self.assertIn("hunger", applied)
-        self.assertGreater(brain.needs.hunger, 10.0)
-
-    def test_on_ne_peut_pas_reserver_deux_fois(self) -> None:
-        """Sans quoi rien n'empêcherait de semer dix gamelles."""
-        brain = self._brain()
-        self.assertTrue(brain.start_care("feed"))
-        self.assertFalse(brain.start_care("feed"))
-
-    def test_le_remboursement_rouvre_le_soin(self) -> None:
-        """Un objet jamais rejoint ne doit pas être facturé (§12)."""
-        brain = self._brain()
-        brain.start_care("feed")
-        brain.refund_care("feed")
-        self.assertTrue(brain.can_care("feed"))
-        self.assertEqual(brain.needs.hunger, 10.0)
-
-    def test_le_chemin_direct_reste_entier(self) -> None:
-        """La caresse fait toujours les deux d'un coup."""
-        brain = self._brain()
+        brain = Brain(Needs(fun=10.0))
         applied = brain.care("pet")
         self.assertTrue(applied)
         self.assertFalse(brain.can_care("pet"))
@@ -2184,13 +2245,15 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         try:
             w._onboarding = False
             w._intro_phase = ""
+            w.session.economy.tokens = 20
+            w.session.buy_consumable("meal", 2)
             panneau = w._ensure_panel()
-            panneau.open_page("interactions")
+            panneau.open_page("inventory")
             panneau.open_panel()
             _settle(panneau)
             self.assertTrue(w.panel_open)
 
-            w._on_care("feed")
+            w._on_consumable("meal")
             self.assertIsNotNone(w.item, "aucun objet n'est apparu")
 
             _settle(panneau)
@@ -2207,12 +2270,14 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         try:
             w._onboarding = False
             w._intro_phase = ""
+            w.session.economy.tokens = 20
+            w.session.buy_consumable("meal", 2)
             panneau = w._ensure_panel()
-            panneau.open_page("interactions")
+            panneau.open_page("inventory")
             panneau.open_panel()
             _settle(panneau)
 
-            w._on_care("feed")
+            w._on_consumable("meal")
             _settle(panneau)
 
             from pet.app.window import INTRO_SCRIPTED
@@ -2259,7 +2324,9 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         sans faire tourner la boucle n'arme rien, et voit un produit qui marche.
         """
         panneau = w._ensure_panel()
-        panneau.open_page("interactions")
+        w.session.economy.tokens = 20
+        w.session.buy_consumable("meal", 2)
+        panneau.open_page("inventory")
         panneau.open_panel()
         _, _, pw, ph = w._pet_rect()
         for _ in range(int(secondes / dt)):
@@ -2290,7 +2357,7 @@ class FetchWithPanelOpenTest(unittest.TestCase):
             w._intro_phase = ""
             panneau = self._menu_ouvert(w)
 
-            w._on_care("feed")
+            w._on_consumable("meal")
             self.assertIsNotNone(w.item)
             self.assertTrue(panneau.closing)
 
@@ -2329,7 +2396,7 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         try:
             w._onboarding = False
             w._intro_phase = ""
-            w._on_care("feed")
+            w._on_consumable("meal")
             self.assertTrue(self._boucle(w), "il n'est jamais parti")
 
             # On l'attrape : la locomotion cède et oublie sa cible.
@@ -2351,8 +2418,10 @@ class FetchWithPanelOpenTest(unittest.TestCase):
         try:
             w._onboarding = False
             w._intro_phase = ""
+            w.session.economy.tokens = 20
+            w.session.buy_consumable("meal", 2)
             panneau = w._ensure_panel()
-            panneau.open_page("interactions")
+            panneau.open_page("inventory")
             panneau.open_panel()
             _settle(panneau)
 
@@ -2433,18 +2502,19 @@ class ItemPanelTest(unittest.TestCase):
 
         session = _FauxSession(Brain(), "Zig")
         session.appearance = {}
+        session.consumables = {"meal": 2, "wipe": 1, "battery": 1}
         panel = CarePanel(session, generate(8))
-        panel.open_page("interactions")
+        panel.open_page("inventory")
 
         offerts = {b.action: b.enabled for b in panel._layout().buttons}
-        for kind in ITEM_KINDS:
-            self.assertTrue(offerts[kind])
+        for cle in ("use:meal", "use:wipe"):
+            self.assertTrue(offerts[cle])
 
         panel.item_pending = True
         offerts = {b.action: b.enabled for b in panel._layout().buttons}
-        for kind in ITEM_KINDS:
-            self.assertFalse(offerts[kind], kind + " reste offert")
-        self.assertTrue(offerts["pet"],
+        for cle in ("use:meal", "use:wipe"):
+            self.assertFalse(offerts[cle], cle + " reste offert")
+        self.assertTrue(offerts["use:battery"],
                         "la caresse ne dépend d'aucun objet")
 
 

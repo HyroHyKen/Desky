@@ -237,6 +237,22 @@ def _balloon(path: QPainterPath) -> None:
     path.addPath(stroker.createStroke(ficelle))
 
 
+def _crate(path: QPainterPath) -> None:
+    """Caisse — l'inventaire.
+
+    Un coffre vu de face, avec sa sangle. Distinct du sac de la boutique : l'un
+    est ce qu'on possède, l'autre ce qu'on peut acheter, et les confondre à
+    seize pixels rendrait la navigation illisible.
+    """
+    _rounded(path, 14.0, 30.0, 72.0, 52.0, 8.0)
+    creux = QPainterPath()
+    _rounded(creux, 22.0, 38.0, 56.0, 36.0, 5.0)
+    path.addPath(creux)
+    sangle = QPainterPath()
+    _rounded(sangle, 42.0, 22.0, 16.0, 40.0, 4.0)
+    path.addPath(sangle)
+
+
 def _token(path: QPainterPath) -> None:
     """Jeton — la monnaie. Un disque et son anneau intérieur."""
     piece = QPainterPath()
@@ -389,6 +405,13 @@ BUILDERS = {
     "custom": _palette,
     "token": _token,
     "games": _balloon,
+    "inventory": _crate,
+    # Rayons de consommables : l'icône du besoin servi. Un rayon et le besoin
+    # qu'il sert disent la même chose, et un second pictogramme pour la même
+    # idée n'apprendrait rien à personne.
+    "shop_hunger": _bowl,
+    "shop_hygiene": _drop,
+    "shop_energy": _battery,
     "rally": _balloon,
     "shop_hat": _cat_hat,
     "shop_moustache": _cat_moustache,

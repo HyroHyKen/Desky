@@ -69,18 +69,37 @@ FALLBACK_STATE = "idle"
 # Gains de soin, et délai avant de pouvoir resservir. Les délais existent pour
 # que le gavage ne soit pas la stratégie optimale — c'est le pendant, côté soin,
 # du plafond quotidien que le §14 impose aux tokens.
+# Soins **gratuits**. Il n'en reste qu'un depuis le lot L13 : nourrir et
+# nettoyer sont devenus des consommables qu'on achète (cf. `consumables`), et
+# jouer est devenu un jeu.
+#
+# La caresse survit seule parce qu'il fallait que le robot reste caressable sans
+# rien posséder. C'est le geste qu'on fait en passant, et il ne doit rien
+# coûter — ni jeton, ni objet.
 CARE_GAINS: dict[str, dict[str, float]] = {
-    "feed":  {"hunger": 46.0},
-    "play":  {"fun": 34.0, "energy": -6.0},
     "pet":   {"fun": 16.0},
-    "clean": {"hygiene": 58.0},
 }
 
+# Amusement rendu par une partie : un socle, plus un bonus par échange, plafonné.
+#
+# Le socle récompense d'avoir joué même une partie ratée — le §12 interdit de
+# punir. Le bonus récompense d'avoir bien joué. Le plafond empêche qu'une seule
+# très longue partie remplisse la jauge pour la journée, ce qui retirerait toute
+# raison de rejouer.
+GAME_FUN_BASE = 8.0
+GAME_FUN_PER_RALLY = 1.6
+GAME_FUN_MAX = 46.0
+
+
+def game_fun(score: int) -> float:
+    """Amusement rendu par une partie de `score` échanges."""
+    return min(GAME_FUN_MAX, GAME_FUN_BASE + GAME_FUN_PER_RALLY * max(0, score))
+
+# Délai du seul soin gratuit. Les consommables, eux, n'en ont pas : les
+# posséder **est** la limite, et superposer un compte à rebours à une quantité
+# donnerait un objet qu'on a sans pouvoir s'en servir.
 CARE_COOLDOWN: dict[str, float] = {
-    "feed": 1.5 * HOUR,
-    "play": 15.0 * 60.0,
     "pet": 2.0 * 60.0,
-    "clean": 2.0 * HOUR,
 }
 
 # Plafond de décroissance hors ligne. Revenir de vacances devant un pet
@@ -217,6 +236,25 @@ class Needs:
         for name, rate in zip(NEEDS, rates):
             setattr(self, name, clamp(getattr(self, name) + rate * hours))
 
+    def apply(self, gains: dict[str, float]) -> dict[str, float]:
+        """Applique des deltas, et rend ceux qui ont **effectivement** pris.
+
+        Le même contrat que `care`, dont c'est désormais le cœur commun : le
+        delta réel diffère du nominal dès qu'un besoin sature, et c'est la
+        valeur réelle que l'interface doit montrer. Promettre +52 puis n'en
+        donner que 4 est le genre de détail qui fait paraître un logiciel faux.
+        """
+        applied: dict[str, float] = {}
+        for name, gain in gains.items():
+            if name not in NEEDS:
+                continue
+            before = getattr(self, name)
+            after = clamp(before + gain)
+            if after != before:
+                applied[name] = after - before
+            setattr(self, name, after)
+        return applied
+
     def care(self, kind: str) -> dict[str, float]:
         """Applique un soin. Retourne les deltas **effectivement** appliqués.
 
@@ -225,13 +263,4 @@ class Needs:
         donner que 4 est le genre de détail qui fait paraître un logiciel faux.
         """
         gains = CARE_GAINS.get(kind)
-        if not gains:
-            return {}
-        applied: dict[str, float] = {}
-        for name, gain in gains.items():
-            before = getattr(self, name)
-            after = clamp(before + gain)
-            if after != before:
-                applied[name] = after - before
-            setattr(self, name, after)
-        return applied
+        return self.apply(gains) if gains else {}

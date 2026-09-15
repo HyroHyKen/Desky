@@ -30,9 +30,10 @@ from .. import resources
 
 # Soins qui passent par un objet, et le préfixe de fichier qui les fournit.
 # `pet` n'y figure pas : une caresse ne s'apporte pas.
+# Familles de sprites posables sur le bureau. `play` a disparu au lot L13 :
+# jouer est devenu un jeu, pas un objet qu'on pose.
 ITEM_KINDS: dict[str, str] = {
     "feed": "food",
-    "play": "toy",
     "clean": "clean",
 }
 
@@ -109,9 +110,14 @@ class ItemWindow(QWidget):
     """
 
     def __init__(self, kind: str, sprite: Path | None, side: int,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None,
+                 consumable: str = "") -> None:
         super().__init__(parent)
         self.kind = kind
+        # Article dont il provient. L'objet posé doit savoir **ce qu'il rend**
+        # une fois rejoint, et ce qu'il faut rembourser s'il s'évapore : deux
+        # gamelles de prix différents posent le même sprite.
+        self.consumable = consumable
         self.state = "falling"
         self._t = 0.0
         self._fade = 1.0

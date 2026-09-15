@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 
 from .actions import REFLEXES
 from .brain import TICK, Brain
-from .needs import NEEDS
+from . import consumables
+from .needs import NEEDS, game_fun
 from .sensors import SystemContext
 from .trace import Trace
 from .utility import SelfState
@@ -54,7 +55,22 @@ POKES_PER_HOUR = 2.5
 # précise — les besoins tiennent-ils dans une bande saine avec un soin normal.
 CARE_CHECK = 300.0
 CARE_THRESHOLD = 40.0
-CARE_FOR_NEED = {"hunger": "feed", "fun": "play", "hygiene": "clean"}
+# Ce que sert un utilisateur attentif, besoin par besoin. Depuis le lot L13 il
+# ne s'agit plus de boutons gratuits : la faim et l'hygiène passent par des
+# **consommables** qu'il faut posséder, l'amusement par une **partie**, et seule
+# la caresse reste un soin au sens ancien.
+#
+# La simulation suppose un stock fourni — la question qu'elle pose est « les
+# besoins tiennent-ils dans une bande saine avec un soin normal », pas « le
+# joueur a-t-il assez de jetons ». Cette seconde question est celle de
+# l'économie, et elle se règle par le prix, pas ici.
+CONSUMABLE_FOR_NEED = {"hunger": "meal", "hygiene": "soap"}
+CARE_FOR_NEED = {"fun": "pet"}
+
+# Échanges d'une partie type dans la simulation. Une partie honnête sans être
+# brillante : c'est ce qu'un utilisateur attentif obtient en jouant de temps en
+# temps, pas un record.
+SIM_RALLY = 10
 
 
 @dataclass
@@ -267,10 +283,20 @@ def replay(trace: Trace, brain: Brain | None = None, dt: float = TICK,
             care_left -= dt
             if present and care_left <= 0.0:
                 care_left = CARE_CHECK
+                for need, cle in CONSUMABLE_FOR_NEED.items():
+                    if getattr(brain.needs, need) >= CARE_THRESHOLD:
+                        continue
+                    article = consumables.get(cle)
+                    if article and brain.needs.apply({article.need: article.gain}):
+                        report.cares[cle] = report.cares.get(cle, 0) + 1
                 for need, kind in CARE_FOR_NEED.items():
                     if getattr(brain.needs, need) < CARE_THRESHOLD:
                         if brain.care(kind):
                             report.cares[kind] = report.cares.get(kind, 0) + 1
+                # Une partie quand il s'ennuie : c'est désormais ce qui amuse.
+                if brain.needs.fun < CARE_THRESHOLD:
+                    brain.needs.apply({"fun": game_fun(SIM_RALLY)})
+                    report.cares["rally"] = report.cares.get("rally", 0) + 1
 
         if t >= next_sample:
             report.curve.append((t, brain.needs.as_dict(), plan.action))

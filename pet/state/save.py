@@ -394,6 +394,14 @@ STATE_DEFAULTS: dict[str, Any] = {
     # dictionnaire, sans nouveau mécanisme.
     "appearance": {},
     "tokens": 0,
+    # Consommables possédés, `clé -> quantité` (lot L13). Séparé de
+    # `inventory`, qui liste des cosmétiques dont on possède **un** exemplaire
+    # pour toujours : une quantité et une appartenance ne se rangent pas dans la
+    # même structure, et les confondre aurait demandé de deviner à la lecture.
+    #
+    # Absent des anciennes sauvegardes, donc vide par défaut : la migration est
+    # purement additive, rien d'existant ne change de forme.
+    "consumables": {},
     # Meilleurs scores par jeu (lot L12). Un dictionnaire plutôt qu'un champ
     # par jeu : le second jeu ne doit pas demander de migration de schéma.
     "best_scores": {},

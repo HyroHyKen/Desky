@@ -158,6 +158,24 @@ class InvertedEconomyTest(unittest.TestCase):
         self.assertEqual(n.as_dict(), avant)
 
 
+def _remontees(need: str) -> list[dict[str, float]]:
+    """Tous les moyens de faire remonter `need`, sous forme de deltas.
+
+    Les rassembler ici plutôt que de les énumérer dans chaque test est ce qui
+    fait que le lot suivant, qui déplacera encore un soin, n'aura qu'un endroit
+    à corriger — et que ce test continuera de dire la même chose.
+    """
+    from pet.brain.consumables import CONSUMABLES
+    from pet.brain.needs import game_fun
+
+    voies = [{n: g for n, g in gains.items() if n == need and g > 0}
+             for gains in CARE_GAINS.values()]
+    voies += [{a.need: a.gain} for a in CONSUMABLES if a.need == need]
+    if need == "fun":
+        voies.append({"fun": game_fun(12)})
+    return [v for v in voies if v]
+
+
 class NoIrreversibleStateTest(unittest.TestCase):
     """« Aucune mort, aucun état irréversible » (§12)."""
 
@@ -168,9 +186,10 @@ class NoIrreversibleStateTest(unittest.TestCase):
         # qui est interdite, pas le zéro.
         self.assertEqual(n.hunger, 0.0)
 
-        for kind in CARE_GAINS:
-            for _ in range(4):
-                n.care(kind)
+        for name in NEEDS:
+            for gains in _remontees(name):
+                for _ in range(4):
+                    n.apply(gains)
         # Chaque besoin remonte par **son** vecteur : `hunger` et `hygiene` par
         # le soin, `fun` par l'activité, `energy` par le repos. Faire suivre les
         # soins d'une seule tranche d'activité épuiserait justement `energy`.
@@ -181,13 +200,19 @@ class NoIrreversibleStateTest(unittest.TestCase):
                                f"{name} n'est pas remonté après soins")
 
     def test_aucun_besoin_ne_se_verrouille_a_zero(self) -> None:
+        """Chaque besoin doit avoir **un** chemin de retour, quel qu'il soit.
+
+        Les chemins ont changé au lot L13 — consommables pour la faim et
+        l'hygiène, partie pour l'amusement, caresse et repos pour le reste —
+        mais la propriété, elle, ne change pas : rien ne doit pouvoir se
+        verrouiller à zéro.
+        """
         for name in NEEDS:
             n = Needs(**{k: 0.0 for k in NEEDS})
             monte = [s for s, r in RATES.items()
                      if r[NEEDS.index(name)] > 0.0] or ["typing"]
-            for kind, gains in CARE_GAINS.items():
-                if name in gains and gains[name] > 0:
-                    n.care(kind)
+            for gains in _remontees(name):
+                n.apply(gains)
             n.tick(monte[0], 8.0 * HOUR)
             self.assertGreater(getattr(n, name), 0.0,
                                f"{name} est irrécupérable")
@@ -195,8 +220,10 @@ class NoIrreversibleStateTest(unittest.TestCase):
 
 class CareTest(unittest.TestCase):
     def test_un_soin_retourne_le_delta_reellement_applique(self) -> None:
+        # Par un consommable depuis le lot L13 : nourrir n'est plus un soin
+        # gratuit, mais le contrat du delta réel est le même.
         n = Needs(hunger=90.0)
-        applied = n.care("feed")
+        applied = n.apply({"hunger": 46.0})
         self.assertAlmostEqual(applied["hunger"], 10.0, places=6)
         self.assertEqual(n.hunger, FULL)
 
@@ -210,12 +237,23 @@ class CareTest(unittest.TestCase):
         self.assertEqual(n.care("astiquer"), {})
         self.assertEqual(n.as_dict(), avant)
 
-    def test_jouer_coute_de_l_energie(self) -> None:
-        """Le couplage qui rend `nap` atteignable après une session de jeu."""
-        n = Needs(fun=20.0, energy=60.0)
-        n.care("play")
+    def test_une_partie_amuse_et_plafonne(self) -> None:
+        """L'amusement vient des jeux depuis le lot L13, plus d'un bouton.
+
+        Le socle récompense d'avoir joué même une partie ratée — le §12
+        interdit de punir. Le bonus récompense d'avoir bien joué. Le plafond
+        empêche qu'une seule très longue partie remplisse la jauge pour la
+        journée, ce qui retirerait toute raison de rejouer.
+        """
+        from pet.brain.needs import GAME_FUN_BASE, GAME_FUN_MAX, game_fun
+
+        self.assertAlmostEqual(game_fun(0), GAME_FUN_BASE)
+        self.assertGreater(game_fun(10), game_fun(3))
+        self.assertAlmostEqual(game_fun(10_000), GAME_FUN_MAX)
+
+        n = Needs(fun=20.0)
+        n.apply({"fun": game_fun(12)})
         self.assertGreater(n.fun, 20.0)
-        self.assertLess(n.energy, 60.0)
 
     def test_chaque_soin_vise_un_besoin_connu(self) -> None:
         for kind, gains in CARE_GAINS.items():
@@ -542,23 +580,26 @@ class BrainTimingTest(unittest.TestCase):
         self.assertEqual(plan.action, "happy_bounce")
 
     def test_un_soin_declenche_la_celebration(self) -> None:
-        b = Brain(Needs(hunger=10.0))
-        self.assertTrue(b.care("feed"))
+        b = Brain(Needs(fun=10.0))
+        self.assertTrue(b.care("pet"))
         plan = b.update(TICK, ctx("typing"), me())
         self.assertEqual(plan.action, "happy_bounce")
 
     def test_un_soin_est_refuse_pendant_son_delai(self) -> None:
-        b = Brain(Needs(hunger=0.0))
-        self.assertTrue(b.care("feed"))
-        self.assertFalse(b.can_care("feed"))
-        self.assertEqual(b.care("feed"), {}, "le délai a été ignoré")
-        self.assertGreater(b.cooldown("feed"), 0.0)
+        b = Brain(Needs(fun=0.0))
+        self.assertTrue(b.care("pet"))
+        self.assertFalse(b.can_care("pet"))
+        self.assertEqual(b.care("pet"), {}, "le délai a été ignoré")
+        self.assertGreater(b.cooldown("pet"), 0.0)
 
     def test_un_delai_de_soin_s_epuise(self) -> None:
-        b = Brain(Needs(hunger=0.0))
-        b.care("feed")
-        b.update(CARE_COOLDOWN["feed"] + 1.0, ctx(), me())
-        self.assertTrue(b.can_care("feed"))
+        # Sur la caresse : c'est le seul soin gratuit depuis le lot L13, donc
+        # le seul qui ait encore un délai. Les consommables sont bornés par ce
+        # qu'on en possède, pas par un compte à rebours.
+        b = Brain(Needs(fun=0.0))
+        b.care("pet")
+        b.update(CARE_COOLDOWN["pet"] + 1.0, ctx(), me())
+        self.assertTrue(b.can_care("pet"))
 
     def test_un_soin_inconnu_est_refuse_sans_lever(self) -> None:
         b = Brain()
@@ -849,22 +890,22 @@ class SessionTest(unittest.TestCase):
 
     def test_les_delais_de_soin_survivent_a_une_fermeture(self) -> None:
         s = self._session()
-        s.brain.needs.hunger = 0.0
-        s.care("feed")
-        reste = s.brain.cooldown("feed")
+        s.brain.needs.fun = 0.0
+        s.care("pet")
+        reste = s.brain.cooldown("pet")
         self.assertGreater(reste, 0.0)
         peu_apres = time.time() + 60.0
         s2 = self._session(clock=lambda: peu_apres)
-        self.assertGreater(s2.brain.cooldown("feed"), 0.0)
-        self.assertLess(s2.brain.cooldown("feed"), reste)
+        self.assertGreater(s2.brain.cooldown("pet"), 0.0)
+        self.assertLess(s2.brain.cooldown("pet"), reste)
 
     def test_un_delai_expire_pendant_l_absence(self) -> None:
         s = self._session()
-        s.brain.needs.hunger = 0.0
-        s.care("feed")
-        bien_apres = time.time() + CARE_COOLDOWN["feed"] + 60.0
+        s.brain.needs.fun = 0.0
+        s.care("pet")
+        bien_apres = time.time() + CARE_COOLDOWN["pet"] + 60.0
         s2 = self._session(clock=lambda: bien_apres)
-        self.assertTrue(s2.brain.can_care("feed"))
+        self.assertTrue(s2.brain.can_care("pet"))
 
     def test_le_nom_est_definitif(self) -> None:
         s = self._session()

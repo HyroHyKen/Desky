@@ -16,6 +16,7 @@ import logging
 import time
 
 from ..state import save
+from . import consumables
 from .brain import Brain
 from .economy import Economy
 from .needs import Needs, offline_elapsed
@@ -214,6 +215,85 @@ class Session:
         self.flush(force=True)
 
     # --- enregistrement ---------------------------------------------------
+
+    # -- consommables (lot L13) ---------------------------------------------
+
+    @property
+    def consumables(self) -> dict[str, int]:
+        """Quantités possédées, clé par clé. Les zéros n'y figurent pas."""
+        brut = self.store.data.get("consumables") or {}
+        out: dict[str, int] = {}
+        for cle, nombre in brut.items():
+            try:
+                quantite = int(nombre)
+            except (TypeError, ValueError):
+                continue
+            if quantite > 0:
+                out[str(cle)] = quantite
+        return out
+
+    def count(self, key: str) -> int:
+        return self.consumables.get(key, 0)
+
+    def buy_consumable(self, key: str, quantity: int = 1) -> bool:
+        """Achète `quantity` exemplaires. Rend `False` si le solde ne suffit pas.
+
+        Tout ou rien : acheter trois gamelles avec de quoi en payer deux ne doit
+        pas en livrer deux et prendre l'argent des trois.
+        """
+        article = consumables.get(key)
+        if article is None or quantity < 1:
+            return False
+        if not self.economy.spend(article.price * quantity):
+            return False
+        stock = dict(self.consumables)
+        stock[key] = stock.get(key, 0) + quantity
+        self.store.set(consumables=stock)
+        return True
+
+    def use_consumable(self, key: str) -> bool:
+        """Retire un exemplaire du stock. Rend `False` s'il n'y en a plus.
+
+        Ne l'applique pas : c'est la fenêtre qui décide **comment** — posé sur
+        le bureau et rejoint, ou appliqué sur-le-champ. Le stock, lui, se décide
+        ici et nulle part ailleurs.
+        """
+        stock = dict(self.consumables)
+        if stock.get(key, 0) < 1:
+            return False
+        stock[key] -= 1
+        if stock[key] <= 0:
+            del stock[key]
+        self.store.set(consumables=stock)
+        return True
+
+    def apply_consumable(self, key: str) -> dict[str, float]:
+        """Applique l'effet d'un consommable **déjà retiré du stock**.
+
+        Séparé de `use_consumable` parce que les deux moments ne coïncident
+        pas : un article posé sur le bureau quitte le stock tout de suite — sans
+        quoi on en sèmerait dix — mais n'agit qu'une fois le robot arrivé. La
+        pile, elle, fait les deux dans la même seconde.
+        """
+        article = consumables.get(key)
+        if article is None:
+            return {}
+        applied = self.brain.needs.apply({article.need: article.gain})
+        if applied:
+            self.flush(force=True)
+        return applied
+
+    def refund_consumable(self, key: str) -> None:
+        """Rend un exemplaire. Pour l'objet posé puis jamais rejoint.
+
+        Le §12 interdit de punir : un objet qui s'évapore parce que le robot
+        n'y est pas allé ne doit pas coûter l'article.
+        """
+        if consumables.get(key) is None:
+            return
+        stock = dict(self.consumables)
+        stock[key] = stock.get(key, 0) + 1
+        self.store.set(consumables=stock)
 
     # -- scores de jeu (lot L12) --------------------------------------------
 

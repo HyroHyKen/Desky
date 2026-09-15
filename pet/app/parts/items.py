@@ -18,6 +18,7 @@ import logging
 
 import math
 
+from ...brain import consumables
 from ...ui.item import REACH, SIZE_RATIO, ItemWindow
 from ..ground import floor_y
 
@@ -45,23 +46,28 @@ class ItemsMixin:
     def item_pending(self) -> bool:
         return self.item is not None and not self.item.gone
 
-    def _spawn_item(self, kind: str) -> bool:
-        """Fait apparaître un objet de soin au sol, près du pet.
+    def _spawn_item(self, key: str) -> bool:
+        """Pose au sol l'objet correspondant au consommable `key`.
 
-        Le délai du soin est posé **ici**, à l'apparition, et non à la
-        consommation : sans cela rien n'empêcherait de semer dix gamelles. S'il
-        n'est jamais rejoint, l'objet s'évapore et le délai est remboursé — le
-        §12 interdit de punir.
+        L'article quitte le stock **ici**, à l'apparition, et non à la
+        consommation : sans cela rien n'empêcherait d'en semer dix avec un seul
+        exemplaire. S'il n'est jamais rejoint, l'objet s'évapore et l'article est
+        rendu — le §12 interdit de punir.
         """
-        if self.item_pending or not self.session.start_care(kind):
+        article = consumables.get(key)
+        if article is None or self.item_pending:
             return False
+        if not self.session.use_consumable(key):
+            return False
+        kind = article.kind
 
         _, _, pw, ph = self._pet_rect()
         dpr = pw / max(1, self.width())
         cote_logique = max(24, int(round(SIZE_RATIO * ph / dpr)))
         cote_physique = cote_logique * dpr
 
-        item = ItemWindow(kind, self._picker.pick(kind), cote_logique)
+        item = ItemWindow(kind, self._picker.pick(kind), cote_logique,
+                          consumable=key)
         mon = self.current_monitor()
         sol = floor_y(mon.work, int(cote_physique))
 
@@ -78,9 +84,9 @@ class ItemsMixin:
         self.item = item
         self._sync_panel_items()
         self.clock.poke()
-        log.info("objet de soin : %s", kind)
+        log.info("objet posé : %s (%s)", key, kind)
         if self.diag:
-            print(f"[diag] objet {kind} en x={cible:.0f}", flush=True)
+            print(f"[diag] objet {key} en x={cible:.0f}", flush=True)
         return True
 
     def _step_item(self, dt: float) -> None:
@@ -107,8 +113,8 @@ class ItemsMixin:
                 if item.gone:
                     # Jamais rejoint : on rend le délai plutôt que de le faire
                     # payer, et le bouton redevient disponible.
-                    self.session.refund_care(item.kind)
-                    log.info("objet %s évaporé, délai rendu", item.kind)
+                    self.session.refund_consumable(item.consumable)
+                    log.info("objet %s évaporé, article rendu", item.consumable)
             return
 
         item.step(dt, sol)
@@ -125,9 +131,9 @@ class ItemsMixin:
     def _consume_item(self, item: ItemWindow) -> None:
         if not item.consume():
             return
-        applied = self.session.deliver_care(item.kind)
+        applied = self.session.apply_consumable(item.consumable)
         if applied:
-            self._celebrate_care(item.kind, applied)
+            self._celebrate_care(item.consumable, applied)
         if self.locomotion is not None:
             self.locomotion.stop()
 

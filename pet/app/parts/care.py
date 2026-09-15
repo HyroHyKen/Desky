@@ -52,6 +52,8 @@ class CareMixin:
             self.panel.reset_requested.connect(self._on_reset)
             self.panel.autostart_toggled.connect(self._on_autostart)
             self.panel.game_requested.connect(self._on_game)
+            self.panel.purchase_requested.connect(self._on_purchase)
+            self.panel.consumable_used.connect(self._on_consumable)
             self.panel.item_preview = self.cosmetic_preview
         return self.panel
 
@@ -99,32 +101,64 @@ class CareMixin:
                    int(haut_logique - panel.height() - PANEL_GAP))
 
     def _on_care(self, kind: str) -> None:
-        """Un bouton de soin a été pressé.
-
-        Deux chemins, et c'est la seule branche du mécanisme : la caresse agit
-        tout de suite, les trois autres **font apparaître un objet** et
-        n'agissent qu'une fois le robot et l'objet réunis.
-        """
-        if kind in ITEM_KINDS:
-            if self._spawn_item(kind):
-                # **Le panneau se retire.** Il bloque la locomotion — voulu :
-                # ancré au-dessus de la tête, il serait illisible à courir
-                # après un robot en mouvement. Mais les trois soins qui passent
-                # par un objet sont demandés depuis ce panneau, et il restait
-                # ouvert après le clic : le robot voyait sa gamelle, la
-                # regardait, et ne pouvait jamais l'atteindre. L'objet
-                # s'évaporait au bout de trois minutes, le délai était
-                # remboursé, et le soin n'avait simplement jamais lieu.
-                #
-                # Le fermer est aussi ce que le geste veut dire : l'utilisateur
-                # a posé quelque chose sur le bureau, l'intéressant n'est plus
-                # dans le menu.
-                self._close_panel_for_item()
-            return
+        """Le seul soin gratuit restant : la caresse. Elle agit tout de suite."""
         applied = self.session.care(kind)
         if not applied:
             return
         self._celebrate_care(kind, applied)
+
+    def _on_purchase(self, key: str) -> None:
+        """Achat d'un consommable, à l'unité."""
+        from ...brain import consumables
+
+        article = consumables.get(key)
+        if article is None:
+            return
+        if self.session.buy_consumable(key):
+            bus.emit("article_achete", emplacement=article.need, cle=key)
+        else:
+            bus.emit("achat_refuse", emplacement=article.need, cle=key,
+                     raison="fonds")
+        if self.panel is not None:
+            self.panel.update()
+
+    def _on_consumable(self, key: str) -> None:
+        """Un article de l'inventaire a été utilisé.
+
+        Deux chemins, et c'est la seule branche du mécanisme. La pile agit
+        **sur-le-champ** : la faire traverser l'écran serait une petite comédie
+        sans intérêt, et on l'utilise précisément quand le robot est trop
+        épuisé pour marcher. Tout le reste se pose sur le bureau et n'agit
+        qu'une fois le robot et l'objet réunis.
+        """
+        from ...brain import consumables
+
+        article = consumables.get(key)
+        if article is None or self.session.count(key) < 1:
+            return
+
+        if article.instant:
+            if not self.session.use_consumable(key):
+                return
+            applied = self.session.apply_consumable(key)
+            if applied:
+                self._celebrate_care(key, applied)
+            self._close_panel_for_item()
+            return
+
+        if self._spawn_item(key):
+            # **Le panneau se retire.** Il bloque la locomotion — voulu : ancré
+            # au-dessus de la tête, il serait illisible à courir après un robot
+            # en mouvement. Mais les articles sont utilisés **depuis** ce
+            # panneau, et il restait ouvert après le clic : le robot voyait sa
+            # gamelle, la regardait, et ne pouvait jamais l'atteindre. L'objet
+            # s'évaporait au bout de trois minutes et le soin n'avait jamais
+            # lieu.
+            #
+            # Le fermer est aussi ce que le geste veut dire : l'utilisateur a
+            # posé quelque chose sur le bureau, l'intéressant n'est plus dans le
+            # menu.
+            self._close_panel_for_item()
 
     def _close_panel_for_item(self) -> None:
         """Referme le panneau parce qu'un objet vient d'être posé.
@@ -136,12 +170,6 @@ class CareMixin:
             self.panel.close_panel()
 
     def _celebrate_care(self, kind: str, applied: dict) -> None:
-        # Token versé ici, c'est-à-dire à la **livraison** du soin et non au
-        # clic du bouton (§14). Depuis que trois soins sur quatre passent par un
-        # objet posé sur le bureau, créditer au bouton laisserait faire
-        # apparaître dix gamelles sans jamais en livrer une.
-        gagne = self.session.award_tokens()
-
         # Le `brain` élira `happy_bounce` au prochain tick ; la courbe est jouée
         # tout de suite, pour que le geste ait une réponse immédiate.
         if self.animator is not None:
@@ -155,8 +183,6 @@ class CareMixin:
         self.clock.poke()
         if self.panel is not None:
             self.panel.update()
-        if self.diag:
-            print(f"[diag] token +{gagne} -> {self.session.tokens}", flush=True)
         if self.diag:
             print(f"[diag] soin {kind} -> {applied}", flush=True)
 

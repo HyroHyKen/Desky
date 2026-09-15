@@ -31,10 +31,20 @@ from dataclasses import dataclass
 # mérite en deux jours, et le moins cher dans la journée.
 DAILY_CAP = 25
 
-# Gain par soin **livré**. Uniforme : un soin qui rapporterait plus qu'un autre
-# pousserait à ne faire que celui-là, alors que les quatre besoins du §12 ont
-# tous besoin d'être servis.
-AWARD_PER_CARE = 1
+# Gains, désormais **par partie jouée** et non plus par soin livré (lot L13).
+#
+# Le renversement est volontaire : les soins sont devenus des objets qu'on
+# achète, donc ils ne peuvent plus être ce qui finance leur propre achat. Les
+# jeux sont la source, ce qui veut dire que la monnaie s'obtient en passant du
+# temps avec le robot — et ce temps remonte aussi son amusement.
+#
+# Cinq pour un record, parce qu'un record est rare et qu'il doit valoir le coup
+# de viser haut plutôt que d'enchaîner les parties bâclées.
+AWARD_PER_GAME = 1
+AWARD_PER_RECORD = 5
+
+# Conservé sous son ancien nom le temps que les anciens appels disparaissent.
+AWARD_PER_CARE = AWARD_PER_GAME
 
 
 def day_key(when: float | None = None) -> str:

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 
+from ...brain.economy import AWARD_PER_GAME, AWARD_PER_RECORD
+from ...brain.needs import game_fun
 from ...feedback import bus
 from ...games import PLAYER, Balloon, Rally
 from ...games import robot as ia
@@ -230,6 +232,23 @@ class GamesMixin:
 
     def _on_rally_end(self, score: int) -> None:
         record = self.session.record_score("rally", score)
+
+        # **Les jeux sont la source des jetons** depuis le lot L13 : les soins
+        # étant devenus des objets qu'on achète, ils ne peuvent plus financer
+        # leur propre achat. Un jeton par partie, cinq pour un record — un
+        # record est rare, et il doit valoir le coup de viser haut plutôt que
+        # d'enchaîner les parties bâclées.
+        gagne = self.session.award_tokens(
+            AWARD_PER_RECORD if record else AWARD_PER_GAME)
+
+        # Et jouer **est** ce qui amuse le robot. La jauge d'amusement n'a plus
+        # d'autre source que la caresse, qui rend peu : c'est ici qu'elle se
+        # remplit, d'autant plus que la partie a été longue.
+        self.brain.needs.apply({"fun": game_fun(score)})
+        self.session.flush(force=True)
+        if self.diag:
+            print(f"[diag] partie : {score} échanges, +{gagne} jetons",
+                  flush=True)
         # La poussière tombe **là où le ballon a touché**, à pleine force : un
         # ballon qui s'échoue sans rien soulever n'aurait pas l'air d'avoir
         # touché le sol.
