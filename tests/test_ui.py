@@ -1774,6 +1774,126 @@ class ParticleLifecycleTest(unittest.TestCase):
         self.assertIsNone(w.dust)
 
 
+class CupsWindowTest(unittest.TestCase):
+    """Le jeu des gobelets, côté fenêtre : ce que la logique pure ne voit pas.
+
+    Les deux défauts gardés ici se jouaient entièrement dans le fenêtrage, et
+    aucun test de `pet/games` n'aurait pu les attraper — la partie était
+    parfaitement correcte pendant que le robot restait invisible.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    setUp = BubblePopTest.setUp
+    tearDown = BubblePopTest.tearDown
+    _window = BubblePopTest._window
+
+    def _partie(self, w):
+        w._onboarding = False
+        w._intro_phase = ""
+        w.brain.needs.energy = 100.0
+        self.assertTrue(w.start_cups(), "la partie n'a pas démarré")
+        return w.cups
+
+    def _jusqu_au_choix(self, w, limite: float = 40.0) -> None:
+        t, dt = 0.0, 1.0 / 120.0
+        while w.cups is not None and not w.cups.can_pick and t < limite:
+            w._step_cups(dt)
+            t += dt
+
+    def test_le_robot_reapparait_a_la_fin(self) -> None:
+        """Le défaut : `on_end` réaffichait bien le robot, puis la suite de
+        `_step_cups` recalculait la visibilité sur l'état `over` — donc
+        « caché » — et le remasquait dans la foulée. Il ne revenait jamais, et
+        l'utilisateur se retrouvait devant un bureau vide.
+        """
+        w = self._window()
+        try:
+            partie = self._partie(w)
+            self._jusqu_au_choix(w)
+            self.assertTrue(partie.can_pick, "le mélange ne se termine pas")
+
+            partie.pick((partie.robot_slot + 1) % 3)      # on se trompe
+            t, dt = 0.0, 1.0 / 120.0
+            while not partie.over and t < 10.0:
+                w._step_cups(dt)
+                t += dt
+
+            self.assertTrue(partie.over)
+            self.assertTrue(w.isVisible(), "le robot ne revient pas")
+        finally:
+            w.shutdown()
+
+    def test_le_robot_est_cache_pendant_le_melange(self) -> None:
+        """L'illusion tient à cela, et à rien d'autre : le gobelet ne cache pas
+        le robot, il cache du vide."""
+        from pet.games import cups as jeu
+
+        w = self._window()
+        try:
+            partie = self._partie(w)
+            t, dt = 0.0, 1.0 / 120.0
+            vu_cache = False
+            while not partie.can_pick and t < 40.0:
+                w._step_cups(dt)
+                t += dt
+                if partie.state == jeu.SHUFFLING:
+                    self.assertFalse(w.isVisible(),
+                                     "le robot se voit pendant le mélange")
+                    vu_cache = True
+            self.assertTrue(vu_cache, "le mélange n'a jamais eu lieu")
+        finally:
+            w.shutdown()
+
+    def test_il_se_montre_sous_le_bon_gobelet_au_resultat(self) -> None:
+        """Se tromper doit montrer **où il était**, pas où l'on a cliqué."""
+        from pet.games import cups as jeu
+
+        w = self._window()
+        try:
+            partie = self._partie(w)
+            self._jusqu_au_choix(w)
+            vrai = partie.robot_slot
+            partie.pick((vrai + 1) % 3)
+            w._step_cups(1.0 / 120.0)
+
+            self.assertEqual(partie.state, jeu.RESULT)
+            self.assertTrue(w.isVisible())
+            _, _, pw, _ = w._pet_rect()
+            centre = w.cups_window.slot_center_x(vrai)
+            self.assertLess(abs(w._x + pw / 2.0 - centre), pw * 0.6,
+                            "il se montre ailleurs que sous son gobelet")
+        finally:
+            w.shutdown()
+
+    def test_les_gobelets_n_interceptent_que_pendant_le_choix(self) -> None:
+        """Un calque qui prendrait les clics pendant qu'on regarde un mélange
+        volerait des clics à ce qui se trouve dessous sans rien offrir."""
+        w = self._window()
+        try:
+            partie = self._partie(w)
+            w._step_cups(1.0 / 120.0)
+            self.assertFalse(w.cups_window._clickable)
+            self._jusqu_au_choix(w)
+            self.assertTrue(w.cups_window._clickable)
+        finally:
+            w.shutdown()
+
+    def test_la_locomotion_ne_promene_pas_le_robot(self) -> None:
+        """Le laisser marcher pendant une partie le ferait sortir de son
+        gobelet sous les yeux du joueur."""
+        w = self._window()
+        try:
+            self._partie(w)
+            _, _, pw, ph = w._pet_rect()
+            w._step_locomotion(1.0 / 60.0, 0.0, pw, ph)
+            self.assertFalse(w.locomotion.travelling)
+        finally:
+            w.shutdown()
+
+
 class IntroSequenceTest(unittest.TestCase):
     """La scène d'arrivée : il sort, se repère, vous voit, puis demande.
 

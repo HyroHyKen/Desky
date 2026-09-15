@@ -42,6 +42,7 @@ EVENTS: frozenset[str] = frozenset({
     # Jeux (lot L12)
     "partie_lancee",            # {jeu}
     "ballon_frappe",            # {par, echange}
+    "manche_trouvee",           # {jeu, manche}
     "partie_finie",             # {jeu, score, record}
     # Panneau de soin
     "panneau_ouvert",

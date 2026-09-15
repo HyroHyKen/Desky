@@ -23,11 +23,13 @@ import logging
 from ...brain.economy import AWARD_PER_GAME, AWARD_PER_RECORD
 from ...brain.needs import game_fun
 from ...feedback import bus
-from ...games import PLAYER, Balloon, Rally
+from ...games import PLAYER, Balloon, Cups, Rally
+from ...games import cups as jeu_gobelets
 from ...games import robot as ia
 from ...games.rally import SERVE_HEIGHT, SERVE_IMPULSE
 from ...ui import sparks
 from ...ui.balloon_window import BalloonWindow
+from ...ui.cups_window import CupsWindow
 from ..ground import floor_y
 
 log = logging.getLogger("desky.window")
@@ -116,13 +118,159 @@ class GamesMixin:
 
     def _on_game(self, jeu: str) -> None:
         """Le panneau demande une partie."""
-        if jeu != "rally":
+        lancement = {"rally": self.start_rally, "cups": self.start_cups}.get(jeu)
+        if lancement is None:
             return
-        if not self.start_rally():
+        if not lancement():
             # Refus : le robot n'a pas la force. Le §12 interdit de punir, donc
             # on le **dit** — par la bulle, comme tout le reste.
             self.show_in_eyes("energy", "energy", seconds=2.2)
             log.info("partie refusée : énergie insuffisante")
+
+
+    # -- gobelets (lot L14) ---------------------------------------------------
+
+    @property
+    def playing_cups(self) -> bool:
+        return self.cups is not None and not self.cups.over
+
+    def start_cups(self) -> bool:
+        """Lance une partie de gobelets. `False` si le robot n'en a pas la force."""
+        if self.playing or self.playing_cups or not self.can_play():
+            return False
+
+        self.cups = Cups(best=self.session.best_score("cups"))
+        self.cups.on_round = self._on_cups_round
+        self.cups.on_wrong = self._on_cups_wrong
+        self.cups.on_end = self._on_cups_end
+
+        self.brain.needs.energy = max(0.0, self.brain.needs.energy - ENERGY_COST)
+        self._place_cups()
+        self.clock.poke()
+        bus.emit("partie_lancee", jeu="cups")
+        log.info("partie lancée : cups")
+        return True
+
+    def stop_cups(self) -> None:
+        if self.cups is not None and not self.cups.over:
+            self.cups.abandon()
+        self._close_cups()
+
+    def _ensure_cups_window(self) -> CupsWindow:
+        if self.cups_window is None:
+            self.cups_window = CupsWindow()
+            self.cups_window.on_pick = self._on_cups_pick
+        return self.cups_window
+
+    def _place_cups(self) -> None:
+        _, _, pw, _ = self._pet_rect()
+        self._ensure_cups_window().place(
+            self.cups, self._pet_rect(), pw / max(1, self.width()),
+            self.current_monitor().work)
+
+    def _close_cups(self) -> None:
+        if self.cups_window is not None:
+            self.cups_window.close_game()
+        # Le robot réapparaît là où il était : une partie qui se termine ne doit
+        # pas le laisser invisible sur le bureau.
+        self._show_pet(True)
+
+    def _show_pet(self, visible: bool) -> None:
+        """Masque ou réaffiche la fenêtre du pet pendant une partie.
+
+        **C'est ainsi que le robot se cache sous un gobelet**, et non par
+        l'ordre d'empilement : deux fenêtres « toujours au-dessus » se classent
+        selon la dernière activation, ce que rien ne garantit. Le robot
+        réapparaîtrait par-dessus son gobelet une fois sur dix, sur un défaut
+        impossible à reproduire. Ici le gobelet ne cache rien — il cache du vide.
+        """
+        if self._suspended:
+            return
+        if visible and not self.isVisible():
+            self.show()
+        elif not visible and self.isVisible():
+            self.hide()
+
+    def _step_cups(self, dt: float) -> None:
+        partie = self.cups
+        if partie is None or partie.over:
+            return
+        if self._suspended:
+            self.stop_cups()
+            return
+
+        avant = partie.state
+        partie.step(dt)
+
+        if partie.over:
+            # `step` vient de conclure : `on_end` a déjà refermé la partie et
+            # réaffiché le robot. Sans ce retour, la suite recalculait
+            # `decouvert` sur l'état `over` — donc `False` — et remasquait le
+            # robot dans la foulée. Il ne revenait jamais.
+            return
+
+        fenetre = self._ensure_cups_window()
+
+        # Le pet n'est visible que quand un gobelet levé le découvre.
+        decouvert = partie.state in (jeu_gobelets.REVEAL, jeu_gobelets.COVERING)
+        if partie.state == jeu_gobelets.RESULT:
+            decouvert = True
+            # Replacé sous le gobelet du robot, pas sous celui qu'on a choisi :
+            # se tromper doit montrer **où il était**.
+            self._move_pet_to_slot(fenetre, partie.robot_slot)
+        elif avant != partie.state and partie.state == jeu_gobelets.REVEAL:
+            self._move_pet_to_slot(fenetre, partie.robot_slot)
+
+        self._show_pet(decouvert)
+        if decouvert:
+            # Les deux fenêtres sont « toujours au-dessus », et leur ordre
+            # relatif dépend de la dernière activation — donc de rien de
+            # fiable. On le pose explicitement, et seulement quand les deux sont
+            # visibles : c'est là, et là seulement, que la question se pose.
+            fenetre.raise_above_pet(self.hwnd)
+        fenetre.set_clickable(partie.can_pick)
+        fenetre.update()
+        self.clock.poke()
+
+    def _move_pet_to_slot(self, fenetre: CupsWindow, slot: int) -> None:
+        _, _, pw, _ = self._pet_rect()
+        self._x = fenetre.slot_center_x(slot) - pw / 2.0
+        self._apply_position()
+
+    # -- réactions ------------------------------------------------------------
+
+    def _on_cups_pick(self, slot: int) -> None:
+        if self.cups is not None:
+            self.cups.pick(slot)
+
+    def _on_cups_round(self, score: int) -> None:
+        if self.animator is not None:
+            self.animator.play("celebrate")
+        bus.emit("manche_trouvee", jeu="cups", manche=score)
+
+    def _on_cups_wrong(self, slot: int) -> None:
+        if self.animator is not None:
+            self.animator.play("poke_reaction")
+
+    def _on_cups_end(self, score: int) -> None:
+        record = self.session.record_score("cups", score)
+        gagne = self.session.award_tokens(
+            AWARD_PER_RECORD if record else AWARD_PER_GAME)
+        self.brain.needs.apply({"fun": game_fun(score)})
+        self.session.flush(force=True)
+        bus.emit("partie_finie", jeu="cups", score=score, record=record)
+        log.info("gobelets : %d manches, +%d jetons", score, gagne)
+
+        self._close_cups()
+        if self.animator is not None:
+            self.animator.play("celebrate" if record else "poke_reaction")
+
+        panneau = self._ensure_panel()
+        panneau.last_score = {"cups": score}
+        panneau.can_play = self.can_play()
+        panneau.open_page("games")
+        self.place_panel()
+        panneau.open_panel()
 
     # -- boucle --------------------------------------------------------------
 

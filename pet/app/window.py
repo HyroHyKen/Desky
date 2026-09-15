@@ -257,6 +257,8 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
         # panneau : l'immense majorité des sessions ne jouera jamais.
         self.rally = None
         self.balloon_window = None
+        self.cups = None
+        self.cups_window = None
         self._aim_cache = None
         self._aim_age = 0.0
         self._sleep_t = 0.0
@@ -613,6 +615,7 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
         # La partie avance à la cadence du **rendu** : un ballon avancé au
         # rythme du comportement traverserait l'écran par sauts de 50 px.
         self._step_rally(dt)
+        self._step_cups(dt)
         self._step_fall(dt, ph)
         self._look_point = self._look_target(dt, pw)
         self._step_intro(dt)
@@ -779,6 +782,13 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
 
         # Pendant une partie, c'est le jeu qui dit où aller : il l'emporte sur
         # le plan du `brain`, qui ne connaît pas le ballon.
+        if self.playing_cups:
+            # Les gobelets placent le robot eux-mêmes, d'un emplacement à
+            # l'autre : le laisser marcher pendant ce temps le ferait sortir de
+            # son gobelet sous les yeux du joueur.
+            loco.hold(centre)
+            return
+
         cible = self._rally_travel()
         if cible is not None:
             loco.go_to(cible)
@@ -927,7 +937,7 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
             return True
         if self.dust is not None and not self.dust.banc.empty:
             return True
-        if self.playing:
+        if self.playing or self.playing_cups:
             return True
         return False
 
@@ -1103,6 +1113,10 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
     def shutdown(self) -> None:
         self._unsubscribe_effects()
         self.stop_rally()
+        self.stop_cups()
+        if self.cups_window is not None:
+            self.cups_window.close()
+            self.cups_window = None
         if self.balloon_window is not None:
             self.balloon_window.close()
             self.balloon_window = None

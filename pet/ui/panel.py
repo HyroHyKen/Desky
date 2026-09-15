@@ -283,6 +283,7 @@ TOOLTIPS: dict[str, str] = {
     "quit": "Quitter",
     # Jeux
     "rally": "Ne pas laisser tomber le ballon",
+    "cups": "Trouver sous quel gobelet il se cache",
     "back": "Retour",
     "check": "Valider",
     # Soins
@@ -386,7 +387,7 @@ CARE_ACTIONS = ("feed", "play", "pet", "clean")
 # Jeux disponibles. Lancer une partie ferme le panneau, pour la même raison que
 # poser un objet de soin : ce qui est intéressant n'est plus dans le menu, et le
 # panneau bloque la locomotion dont le robot a besoin pour jouer.
-GAME_ACTIONS = ("rally",)
+GAME_ACTIONS = ("rally", "cups")
 
 
 @dataclass
@@ -984,17 +985,20 @@ class CarePanel(QWidget):
             return self._shop_slot_layout(rayon)
 
         if self.page == "games":
-            # Une ligne par jeu : le titre, le record, le bouton. Un seul jeu
-            # aujourd'hui, et la page est construite pour que le second
-            # n'oblige à rien réécrire.
-            hauteur = haut + BUTTON + GAP + BUTTON + PAD
-            layout = Layout(height=hauteur, title=titre)
             jouable = self.can_play
-            layout.buttons = self._row(("rally",), haut,
-                                       enabled=lambda a: jouable)
-            layout.buttons += self._row(("back",), haut + BUTTON + GAP)
-            layout.scores = [("rally", self.session.best_score("rally"),
-                              self.last_score.get("rally", -1))]
+            # Une **ligne par jeu** : son bouton à gauche, ses scores à droite.
+            # La page est construite pour que le troisième jeu n'oblige à rien
+            # réécrire — seule `GAME_ACTIONS` le sait.
+            hauteur = haut + len(GAME_ACTIONS) * (BUTTON + GAP) + BUTTON + PAD
+            layout = Layout(height=hauteur, title=titre)
+            for index, jeu in enumerate(GAME_ACTIONS):
+                y = haut + index * (BUTTON + GAP)
+                layout.buttons += self._row((jeu,), y,
+                                            enabled=lambda a: jouable)
+                layout.scores.append((jeu, self.session.best_score(jeu),
+                                      self.last_score.get(jeu, -1)))
+            layout.buttons += self._row(
+                ("back",), haut + len(GAME_ACTIONS) * (BUTTON + GAP))
             return layout
 
         if self.page == "settings":

@@ -517,6 +517,26 @@ def assert_topmost(hwnd: int) -> None:
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
 
+def raise_above(hwnd: int, other: int) -> None:
+    """Place `hwnd` juste **au-dessus** de `other` dans la pile.
+
+    Entre deux fenêtres toutes deux « toujours au-dessus », l'ordre relatif
+    dépend de la dernière activation, et rien ne le garantit. Deux fenêtres du
+    produit se recouvrent — les gobelets et le robot — et il faut que l'une soit
+    devant l'autre de façon reproductible, faute de quoi le robot réapparaît
+    par-dessus son gobelet une fois sur dix.
+
+    `SWP_NOACTIVATE` est indispensable, ici comme partout ailleurs : réordonner
+    ne doit jamais voler le focus.
+    """
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+    ]
+    user32.SetWindowPos(hwnd, wintypes.HWND(int(other)), 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
 # --- Point d'attention (regard du pet) --------------------------------------
 
 

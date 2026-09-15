@@ -9,11 +9,15 @@ C'est le même partage qu'entre `anim/easing` et `ui/motion`, ou entre
 teste sans écran, et une partie entière peut être jouée en une seconde au pas
 de temps synthétique — robot compris.
 
-Le premier jeu est `rally` : ne pas laisser le ballon toucher le sol.
+Deux jeux à ce jour, et ils se complètent : `rally` teste les réflexes, `cups`
+l'attention. Tous deux passent par la même charpente — une fenêtre à part, un
+coût en énergie au lancement, des jetons et un record à la fin — ce qui est
+précisément ce qu'on attendait de la voir supporter un second jeu.
 """
 
 from .balloon import Balloon
+from .cups import Cups
 from .rally import OVER, PLAYER, PLAYING, ROBOT, SERVING, Rally
 
-__all__ = ["Balloon", "Rally", "PLAYER", "ROBOT",
+__all__ = ["Balloon", "Cups", "Rally", "PLAYER", "ROBOT",
            "SERVING", "PLAYING", "OVER"]

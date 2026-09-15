@@ -253,6 +253,25 @@ def _crate(path: QPainterPath) -> None:
     path.addPath(sangle)
 
 
+def _cup(path: QPainterPath) -> None:
+    """Gobelet renversé — le jeu des trois gobelets.
+
+    Un trapèze et sa lèvre. La lèvre est ce qui le distingue d'un seau ou d'un
+    abat-jour : sans elle, à seize pixels, on ne voit pas qu'il est creux.
+    """
+    corps = QPainterPath()
+    corps.moveTo(34.0, 18.0)
+    corps.lineTo(66.0, 18.0)
+    corps.lineTo(78.0, 76.0)
+    corps.lineTo(22.0, 76.0)
+    corps.closeSubpath()
+    path.addPath(corps)
+    path.addEllipse(QRectF(20.0, 68.0, 60.0, 18.0))
+    creux = QPainterPath()
+    creux.addEllipse(QRectF(30.0, 72.0, 40.0, 10.0))
+    path.addPath(creux)
+
+
 def _token(path: QPainterPath) -> None:
     """Jeton — la monnaie. Un disque et son anneau intérieur."""
     piece = QPainterPath()
@@ -413,6 +432,7 @@ BUILDERS = {
     "shop_hygiene": _drop,
     "shop_energy": _battery,
     "rally": _balloon,
+    "cups": _cup,
     "shop_hat": _cat_hat,
     "shop_moustache": _cat_moustache,
     "settings": _gear,

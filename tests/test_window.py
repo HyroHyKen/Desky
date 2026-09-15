@@ -499,6 +499,7 @@ class FrameDemandTest(unittest.TestCase):
         w._impact = Impact()
         w.dust = None
         w.rally = None
+        w.cups = None
         for cle, valeur in kwargs.items():
             setattr(w, cle, valeur)
         return w
