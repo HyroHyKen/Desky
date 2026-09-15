@@ -2153,6 +2153,92 @@ class CareInTwoStepsTest(unittest.TestCase):
         self.assertFalse(brain.can_care("pet"))
 
 
+class FetchWithPanelOpenTest(unittest.TestCase):
+    """Un objet posé depuis le menu doit pouvoir être rejoint.
+
+    Le défaut : le panneau bloque la locomotion — délibérément, parce qu'un
+    panneau ancré au-dessus de la tête serait illisible s'il courait après un
+    robot en mouvement. Mais les trois soins qui passent par un objet sont
+    demandés **depuis ce panneau**, et il reste ouvert après le clic. Le robot
+    voyait donc sa gamelle, la regardait, et ne pouvait jamais l'atteindre :
+    l'objet s'évaporait au bout de trois minutes et le délai était remboursé.
+
+    Rien n'échouait, rien n'était journalisé — le soin n'avait simplement
+    jamais lieu.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        ensure_app()
+
+    setUp = BubblePopTest.setUp
+    tearDown = BubblePopTest.tearDown
+    _window = BubblePopTest._window
+
+    def test_demander_a_manger_libere_le_robot(self) -> None:
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            panneau = w._ensure_panel()
+            panneau.open_page("interactions")
+            panneau.open_panel()
+            _settle(panneau)
+            self.assertTrue(w.panel_open)
+
+            w._on_care("feed")
+            self.assertIsNotNone(w.item, "aucun objet n'est apparu")
+
+            _settle(panneau)
+            self.assertFalse(w.panel_open,
+                             "le panneau reste ouvert : le robot ne pourra "
+                             "jamais rejoindre son objet")
+        finally:
+            w.shutdown()
+
+    def test_la_locomotion_reprend_la_main(self) -> None:
+        """La conséquence, dite dans les termes du mouvement : une fois l'objet
+        posé, plus rien ne cède la position à l'utilisateur."""
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            panneau = w._ensure_panel()
+            panneau.open_page("interactions")
+            panneau.open_panel()
+            _settle(panneau)
+
+            w._on_care("feed")
+            _settle(panneau)
+
+            from pet.app.window import INTRO_SCRIPTED
+
+            self.assertFalse(
+                w._dragging or w._falling or w.panel_open
+                or w._intro_phase in INTRO_SCRIPTED,
+                "quelque chose bloque encore la locomotion")
+        finally:
+            w.shutdown()
+
+    def test_une_caresse_ne_ferme_pas_le_panneau(self) -> None:
+        """Elle agit tout de suite et ne pose rien sur le bureau : il n'y a
+        aucune raison de renvoyer l'utilisateur hors du menu."""
+        w = self._window()
+        try:
+            w._onboarding = False
+            w._intro_phase = ""
+            panneau = w._ensure_panel()
+            panneau.open_page("interactions")
+            panneau.open_panel()
+            _settle(panneau)
+
+            w._on_care("pet")
+            _settle(panneau)
+            self.assertTrue(w.panel_open, "le panneau s'est fermé pour rien")
+        finally:
+            w.shutdown()
+
+
 class FetchActionTest(unittest.TestCase):
     """L'action d'aller chercher, et sa place dans la hiérarchie."""
 

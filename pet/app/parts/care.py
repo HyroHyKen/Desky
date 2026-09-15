@@ -102,12 +102,34 @@ class CareMixin:
         n'agissent qu'une fois le robot et l'objet réunis.
         """
         if kind in ITEM_KINDS:
-            self._spawn_item(kind)
+            if self._spawn_item(kind):
+                # **Le panneau se retire.** Il bloque la locomotion — voulu :
+                # ancré au-dessus de la tête, il serait illisible à courir
+                # après un robot en mouvement. Mais les trois soins qui passent
+                # par un objet sont demandés depuis ce panneau, et il restait
+                # ouvert après le clic : le robot voyait sa gamelle, la
+                # regardait, et ne pouvait jamais l'atteindre. L'objet
+                # s'évaporait au bout de trois minutes, le délai était
+                # remboursé, et le soin n'avait simplement jamais lieu.
+                #
+                # Le fermer est aussi ce que le geste veut dire : l'utilisateur
+                # a posé quelque chose sur le bureau, l'intéressant n'est plus
+                # dans le menu.
+                self._close_panel_for_item()
             return
         applied = self.session.care(kind)
         if not applied:
             return
         self._celebrate_care(kind, applied)
+
+    def _close_panel_for_item(self) -> None:
+        """Referme le panneau parce qu'un objet vient d'être posé.
+
+        Animé, pas sec : la fermeture du lot L9 dit « j'ai pris votre demande »
+        là où une disparition instantanée aurait l'air d'un bug.
+        """
+        if self.panel is not None and self.panel.isVisible():
+            self.panel.close_panel()
 
     def _celebrate_care(self, kind: str, applied: dict) -> None:
         # Token versé ici, c'est-à-dire à la **livraison** du soin et non au
