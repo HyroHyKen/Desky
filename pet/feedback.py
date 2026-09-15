@@ -39,6 +39,10 @@ EVENTS: frozenset[str] = frozenset({
     # Mouvement du robot (lot L10)
     "atterri",                  # {force, vitesse} — force dans [0, 1]
     "pousse",                   # le pet a été cliqué
+    # Jeux (lot L12)
+    "partie_lancee",            # {jeu}
+    "ballon_frappe",            # {par, echange}
+    "partie_finie",             # {jeu, score, record}
     # Panneau de soin
     "panneau_ouvert",
     "panneau_ferme",

@@ -18,7 +18,9 @@ l'identique.
 from .behaviour import BehaviourMixin
 from .care import CareMixin
 from .diag import DiagnosticsMixin
+from .games import GamesMixin
 from .items import ItemsMixin
 from .onboarding import OnboardingMixin
 
-__all__ = ["BehaviourMixin", "CareMixin", "DiagnosticsMixin", "ItemsMixin", "OnboardingMixin"]
+__all__ = ["BehaviourMixin", "CareMixin", "DiagnosticsMixin", "GamesMixin",
+           "ItemsMixin", "OnboardingMixin"]

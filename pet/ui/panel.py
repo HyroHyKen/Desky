@@ -183,7 +183,7 @@ BAR_LOW_LEVEL = 45.0
 # ajouter une famille d'articles ajoute sa page sans qu'on y touche.
 SHOP_PAGES: tuple[str, ...] = tuple("shop_" + s for s in SLOTS)
 
-PAGES = ("menu", "status", "interactions", "custom", "shop") + SHOP_PAGES + (
+PAGES = ("menu", "status", "interactions", "games", "custom", "shop") + SHOP_PAGES + (
     "settings", "name")
 
 # ---------------------------------------------------------------------------
@@ -212,6 +212,7 @@ SLOT_LABELS: dict[str, str] = {
 
 PAGE_TITLES: dict[str, str] = {
     "interactions": "Interactions",
+    "games": "Jeux",
     "custom": "Apparence",
     "shop": "Boutique",
     "settings": "Réglages",
@@ -228,9 +229,12 @@ TOOLTIPS: dict[str, str] = {
     "status": "Voir son état",
     "interactions": "S'occuper de lui",
     "custom": "Changer son apparence",
+    "games": "Jouer avec lui",
     "shop": "Boutique",
     "settings": "Réglages",
     "quit": "Quitter",
+    # Jeux
+    "rally": "Ne pas laisser tomber le ballon",
     "back": "Retour",
     "check": "Valider",
     # Soins
@@ -294,8 +298,12 @@ TITLE_TIGHT_PAGES: frozenset[str] = frozenset({"status", "shop"}) | frozenset(SH
 # Boutons du menu racine. La personnalisation se glisse **avant** la boutique :
 # les deux touchent à l'apparence, et celle qui est gratuite doit se trouver la
 # première.
-MENU_ACTIONS = ("status", "interactions", "custom", "shop", "settings",
-                "quit")
+# Sept entrées pour six colonnes depuis l'arrivée des jeux : le menu passe sur
+# deux rangées. La largeur du panneau, elle, ne bouge pas — un panneau qui
+# respire en changeant de page est fatigant, et c'est déjà pourquoi toutes les
+# pages se conforment à six colonnes.
+MENU_ACTIONS = ("status", "interactions", "games", "custom", "shop",
+                "settings", "quit")
 
 # Actions qui exigent un appui maintenu. La seule pour l'instant, et la seule
 # qui détruise quoi que ce soit.
@@ -311,6 +319,11 @@ SWATCH_ROWS = (
 
 # Soins de la page d'interactions, et l'icône de chacun.
 CARE_ACTIONS = ("feed", "play", "pet", "clean")
+
+# Jeux disponibles. Lancer une partie ferme le panneau, pour la même raison que
+# poser un objet de soin : ce qui est intéressant n'est plus dans le menu, et le
+# panneau bloque la locomotion dont le robot a besoin pour jouer.
+GAME_ACTIONS = ("rally",)
 
 
 @dataclass
@@ -346,6 +359,10 @@ class Layout:
     big_icon: str = ""
     tokens: int = -1            # solde affiché, -1 pour ne rien montrer
     title: str = ""
+    # Scores à afficher, `(jeu, record, dernier)`. `dernier` vaut -1 quand
+    # aucune partie n'a été jouée dans cette session. Vide hors de la page des
+    # jeux — c'est le seul endroit où un score a un sens.
+    scores: list = field(default_factory=list)
 
 
 class CarePanel(QWidget):
@@ -358,6 +375,7 @@ class CarePanel(QWidget):
     item_chosen = Signal(str, str)
     reset_requested = Signal()
     autostart_toggled = Signal()
+    game_requested = Signal(str)
 
     def __init__(self, session, genome: dict | None = None,
                  parent: QWidget | None = None) -> None:
@@ -383,6 +401,14 @@ class CarePanel(QWidget):
         # bureau à la fois, donc les trois soins qui en produisent un se grisent
         # ensemble tant qu'il n'est ni rejoint ni évaporé.
         self.item_pending = False
+        # Renseigné par la fenêtre, comme `item_pending` : le panneau ne connaît
+        # ni l'énergie ni le coût d'une partie, il affiche ce qu'on lui dit.
+        self.can_play = True
+        # Score de la dernière partie, par jeu. Renseigné par la fenêtre à la
+        # fin d'une partie, et affiché à côté du record — un score seul ne dit
+        # pas si on a bien joué, un record seul ne dit pas ce qu'on vient de
+        # faire.
+        self.last_score: dict[str, int] = {}
 
         # -- animation (lot L9) ---------------------------------------------
         #
@@ -752,8 +778,18 @@ class CarePanel(QWidget):
             # Le menu racine porte le **nom du robot** en guise de titre : c'est
             # sa page d'accueil, et aucun libellé générique ne dirait mieux où
             # l'on se trouve.
-            layout = Layout(height=haut + BUTTON + PAD, title=nom)
-            layout.buttons = self._row(MENU_ACTIONS, haut)
+            # Deux rangées depuis l'arrivée des jeux : sept entrées ne tiennent
+            # pas sur six colonnes, et élargir le panneau le ferait changer de
+            # taille d'une page à l'autre.
+            premiere = MENU_ACTIONS[:MENU_COLUMNS]
+            seconde = MENU_ACTIONS[MENU_COLUMNS:]
+            hauteur = haut + BUTTON + PAD
+            if seconde:
+                hauteur += BUTTON + GAP
+            layout = Layout(height=hauteur, title=nom)
+            layout.buttons = self._row(premiere, haut)
+            if seconde:
+                layout.buttons += self._row(seconde, haut + BUTTON + GAP)
             return layout
 
         if self.page == "status":
@@ -799,6 +835,20 @@ class CarePanel(QWidget):
 
         if self.page in SHOP_PAGES:
             return self._shop_slot_layout(self.page[len("shop_"):])
+
+        if self.page == "games":
+            # Une ligne par jeu : le titre, le record, le bouton. Un seul jeu
+            # aujourd'hui, et la page est construite pour que le second
+            # n'oblige à rien réécrire.
+            hauteur = haut + BUTTON + GAP + BUTTON + PAD
+            layout = Layout(height=hauteur, title=titre)
+            jouable = self.can_play
+            layout.buttons = self._row(("rally",), haut,
+                                       enabled=lambda a: jouable)
+            layout.buttons += self._row(("back",), haut + BUTTON + GAP)
+            layout.scores = [("rally", self.session.best_score("rally"),
+                              self.last_score.get("rally", -1))]
+            return layout
 
         if self.page == "settings":
             hauteur = haut + BUTTON + GAP + BUTTON + PAD
@@ -895,6 +945,9 @@ class CarePanel(QWidget):
             draw_icon(painter, layout.big_icon, boite, INK_OFF)
             self._entree_fin(painter, fini)
 
+        for jeu, record, dernier in layout.scores:
+            self._paint_score(painter, layout, jeu, record, dernier)
+
         for index, button in enumerate(layout.buttons):
             centre = button.rect.center()
             entree = self._entree_debut(painter, "bouton:%s" % button.action,
@@ -973,6 +1026,59 @@ class CarePanel(QWidget):
             painter.setBrush(BAR_LOW if value < BAR_LOW_LEVEL else BAR_FILL)
             painter.drawRoundedRect(QRectF(x, y, remplie, BAR_HEIGHT),
                                     BAR_HEIGHT / 2.0, BAR_HEIGHT / 2.0)
+
+    def _paint_score(self, painter: QPainter, layout: Layout, jeu: str,
+                     record: int, dernier: int = -1) -> None:
+        """Scores d'un jeu, à droite de son bouton.
+
+        Le dernier en grand, le record en petit dessous. Ce sont les seuls
+        chiffres de l'application avec le solde, et la même entorse assumée à
+        la règle du sans-texte : un score se dit en chiffres, et le rendre en
+        pastilles serait illisible dès dix échanges.
+
+        Le dernier score passe à l'accent quand il **est** le record : c'est la
+        seule façon, sans texte, de dire « vous venez de battre le vôtre ».
+        """
+        bouton = next((b for b in layout.buttons if b.action == jeu), None)
+        if bouton is None:
+            return
+        gauche = bouton.rect.right() + GAP
+        largeur = WIDTH - PAD - gauche
+        aligne = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        if dernier >= 0:
+            font = QFont()
+            font.setPixelSize(21)
+            font.setWeight(QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.setPen(ACCENT if dernier >= record and record else INK)
+            painter.drawText(
+                QRectF(gauche, bouton.rect.top() - 2,
+                       largeur, bouton.rect.height() * 0.58),
+                aligne, str(dernier))
+
+        # Le record est précédé d'une **étoile dessinée**, pas d'un caractère.
+        # C'est la règle du §13 — l'interface est en pictogrammes — et c'est
+        # aussi ce que vérifie `test_tout_le_texte_affiche_vient_de_la_table`,
+        # qui a attrapé la première version de cette ligne.
+        taille = 13 if dernier >= 0 else 16
+        hauteur = bouton.rect.height() * (0.50 if dernier >= 0 else 1.0)
+        haut = (bouton.rect.top() + bouton.rect.height() * 0.50 if dernier >= 0
+                else bouton.rect.top())
+        encre = INK_SOFT if dernier >= 0 else (INK if record else INK_OFF)
+
+        etoile = QRectF(gauche, haut + (hauteur - taille) / 2.0, taille, taille)
+        draw_icon(painter, "fun", etoile, encre)
+
+        font = QFont()
+        font.setPixelSize(taille)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(encre)
+        painter.drawText(
+            QRectF(gauche + taille + 4.0, haut,
+                   largeur - taille - 4.0, hauteur),
+            aligne, str(record))
 
     def _paint_title(self, painter: QPainter, titre: str,
                      entree: float = 1.0) -> None:
@@ -1297,6 +1403,10 @@ class CarePanel(QWidget):
             _, emplacement, cle = action.split(":", 2)
             self.item_chosen.emit(emplacement, cle)
             self.update()
+            return
+        if action in GAME_ACTIONS:
+            self.game_requested.emit(action)
+            self.close_panel()
             return
         if action == "autostart":
             self.autostart_toggled.emit()

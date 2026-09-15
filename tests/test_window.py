@@ -498,6 +498,7 @@ class FrameDemandTest(unittest.TestCase):
         # le prédicat le lit, donc le montage doit le fournir (lot L10).
         w._impact = Impact()
         w.dust = None
+        w.rally = None
         for cle, valeur in kwargs.items():
             setattr(w, cle, valeur)
         return w

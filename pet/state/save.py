@@ -394,6 +394,9 @@ STATE_DEFAULTS: dict[str, Any] = {
     # dictionnaire, sans nouveau mécanisme.
     "appearance": {},
     "tokens": 0,
+    # Meilleurs scores par jeu (lot L12). Un dictionnaire plutôt qu'un champ
+    # par jeu : le second jeu ne doit pas demander de migration de schéma.
+    "best_scores": {},
     # Quota quotidien du §14 : le jour en cours et ce qui y a déjà été gagné.
     # Persistés avec le solde, sinon fermer l'application rouvrirait le quota.
     "tokens_day": "",

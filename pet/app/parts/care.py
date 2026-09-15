@@ -51,6 +51,7 @@ class CareMixin:
             self.panel.item_chosen.connect(self._on_cosmetic)
             self.panel.reset_requested.connect(self._on_reset)
             self.panel.autostart_toggled.connect(self._on_autostart)
+            self.panel.game_requested.connect(self._on_game)
             self.panel.item_preview = self.cosmetic_preview
         return self.panel
 
@@ -65,6 +66,9 @@ class CareMixin:
             return
         panel = self._ensure_panel()
         panel.item_pending = self.item_pending
+        # Le panneau ne connaît ni l'énergie ni le coût d'une partie : il
+        # grise le bouton sur ce qu'on lui dit, comme pour les soins.
+        panel.can_play = self.can_play()
         panel.open_page("menu")
         self.place_panel()
         panel.open_panel()

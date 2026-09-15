@@ -60,8 +60,8 @@ from .clock import Regime, RenderClock
 from .ground import (                                           # noqa: F401
     choose_monitor, floor_y, frac_to_position, position_to_frac,
 )
-from .parts import (BehaviourMixin, CareMixin, DiagnosticsMixin, ItemsMixin,
-                    OnboardingMixin)
+from .parts import (BehaviourMixin, CareMixin, DiagnosticsMixin, GamesMixin,
+                    ItemsMixin, OnboardingMixin)
 from .parts.behaviour import BUBBLE_POP_OMEGA, BUBBLE_POP_ZETA
 # Réexportées : elles vivent désormais avec le code qui les utilise, mais
 # `INTRO_SCRIPTED` est lue par les tests depuis ce module, et rien ne justifie
@@ -134,8 +134,8 @@ FALL_DRAG = 1.1               # amortissement de la composante horizontale
 
 
 
-class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
-                DiagnosticsMixin, QWidget):
+class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
+                CareMixin, DiagnosticsMixin, QWidget):
     """Fenêtre du pet."""
 
     # La sortie est décidée par le bootstrap, pas par la fenêtre : une fenêtre
@@ -252,6 +252,13 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         # du pet : ici elles suivraient ses rebonds et seraient coupées à ses
         # pieds. Voir `ui/dust`. Construite au premier effet, comme le panneau.
         self.dust: ParticleWindow | None = None
+
+        # Partie en cours (lot L12). Construites au premier lancement, comme le
+        # panneau : l'immense majorité des sessions ne jouera jamais.
+        self.rally = None
+        self.balloon_window = None
+        self._aim_cache = None
+        self._aim_age = 0.0
         self._sleep_t = 0.0
         self._abonnements: list[tuple[str, object]] = []
         self._subscribe_effects()
@@ -603,6 +610,9 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
 
         self._impact.step(dt)
         self._step_particles(dt)
+        # La partie avance à la cadence du **rendu** : un ballon avancé au
+        # rythme du comportement traverserait l'écran par sauts de 50 px.
+        self._step_rally(dt)
         self._step_fall(dt, ph)
         self._look_point = self._look_target(dt, pw)
         self._step_intro(dt)
@@ -767,6 +777,12 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
             loco.hold(centre)
             return
 
+        # Pendant une partie, c'est le jeu qui dit où aller : il l'emporte sur
+        # le plan du `brain`, qui ne connaît pas le ballon.
+        cible = self._rally_travel()
+        if cible is not None:
+            loco.go_to(cible)
+
         self._loco_channels = loco.update(dt)
         if loco.travelling or abs(loco.window_y - self._y) > 0.5:
             self._x = loco.window_x
@@ -910,6 +926,8 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
         if not self._impact.settled:
             return True
         if self.dust is not None and not self.dust.banc.empty:
+            return True
+        if self.playing:
             return True
         return False
 
@@ -1084,6 +1102,10 @@ class PetWindow(BehaviourMixin, ItemsMixin, OnboardingMixin, CareMixin,
 
     def shutdown(self) -> None:
         self._unsubscribe_effects()
+        self.stop_rally()
+        if self.balloon_window is not None:
+            self.balloon_window.close()
+            self.balloon_window = None
         if self.dust is not None:
             self.dust.close()
             self.dust = None

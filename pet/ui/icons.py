@@ -215,6 +215,28 @@ def _palette(path: QPainterPath) -> None:
     path.addEllipse(QRectF(32.0, 14.0, 30.0, 30.0))
 
 
+def _balloon(path: QPainterPath) -> None:
+    """Ballon de baudruche — les jeux.
+
+    Un ovale, un nœud, une ficelle. Le nœud est ce qui le distingue d'un
+    disque : sans lui, à seize pixels, l'icône des jeux serait celle du jeton.
+    """
+    path.addEllipse(QRectF(24.0, 10.0, 52.0, 62.0))
+    noeud = QPainterPath()
+    noeud.moveTo(44.0, 70.0)
+    noeud.lineTo(56.0, 70.0)
+    noeud.lineTo(50.0, 80.0)
+    noeud.closeSubpath()
+    path.addPath(noeud)
+    ficelle = QPainterPath()
+    ficelle.moveTo(50.0, 79.0)
+    ficelle.cubicTo(58.0, 84.0, 42.0, 88.0, 50.0, 94.0)
+    stroker = QPainterPathStroker()
+    stroker.setWidth(STROKE * 0.62)
+    stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+    path.addPath(stroker.createStroke(ficelle))
+
+
 def _token(path: QPainterPath) -> None:
     """Jeton — la monnaie. Un disque et son anneau intérieur."""
     piece = QPainterPath()
@@ -366,6 +388,8 @@ BUILDERS = {
     "check": _check,
     "custom": _palette,
     "token": _token,
+    "games": _balloon,
+    "rally": _balloon,
     "shop_hat": _cat_hat,
     "shop_moustache": _cat_moustache,
     "settings": _gear,

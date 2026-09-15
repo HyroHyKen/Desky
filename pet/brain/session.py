@@ -215,6 +215,31 @@ class Session:
 
     # --- enregistrement ---------------------------------------------------
 
+    # -- scores de jeu (lot L12) --------------------------------------------
+
+    def best_score(self, jeu: str) -> int:
+        """Meilleur score enregistré pour ce jeu. Zéro si jamais joué."""
+        scores = self.store.data.get("best_scores") or {}
+        try:
+            return max(0, int(scores.get(jeu, 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def record_score(self, jeu: str, score: int) -> bool:
+        """Enregistre un score. Rend `True` s'il s'agit d'un nouveau record.
+
+        Écrit **seulement** quand le record tombe : une partie ratée n'a aucune
+        raison de provoquer une écriture disque, et le §14 demande que la
+        persistance reste sobre.
+        """
+        score = max(0, int(score))
+        if score <= self.best_score(jeu):
+            return False
+        scores = dict(self.store.data.get("best_scores") or {})
+        scores[jeu] = score
+        self.store.set(best_scores=scores)
+        return True
+
     def flush(self, force: bool = False) -> bool:
         self._since_save = 0.0
         self.store.set(

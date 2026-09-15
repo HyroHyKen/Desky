@@ -252,6 +252,10 @@ class _FauxSession:
         self.inventory = []
         self.tokens = 0
         self.tokens_remaining = 25
+        self.best_scores = {}
+
+    def best_score(self, jeu: str) -> int:
+        return int(self.best_scores.get(jeu, 0))
 
 
 class PanelTest(unittest.TestCase):
