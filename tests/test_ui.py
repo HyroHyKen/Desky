@@ -2245,11 +2245,62 @@ class ItemWindowTest(unittest.TestCase):
         self.assertEqual(item.y, 0.0)
 
     def test_le_survol_suit_l_alpha_et_non_le_rectangle(self) -> None:
-        """Un carré qui mange les clics du bureau serait une gêne."""
+        """Un carré qui mange les clics du bureau serait une gêne.
+
+        La première version testait un point à six pixels du bord **bas**, ce
+        qui supposait que le dessin y descende. Un remplacement des sprites l'a
+        fait échouer sans qu'aucun comportement n'ait changé : le nouveau
+        dessin est simplement mieux centré dans sa case.
+
+        Ce que le test doit affirmer ne dépend pas de l'illustration : un point
+        du dessin intercepte, un point **transparent du même rectangle** ne doit
+        pas — c'est exactement la différence entre suivre l'alpha et suivre la
+        boîte — et un point hors du rectangle non plus.
+        """
         item = self._item()
-        self.assertTrue(item.opaque_at(item.width() / 2, item.height() - 6))
+        self.assertTrue(item.opaque_at(item.width() / 2, item.height() / 2),
+                        "le centre du dessin n'intercepte pas")
+        self.assertFalse(item.opaque_at(2.0, 2.0),
+                         "un coin transparent intercepte : c'est la boîte qui "
+                         "est testée, pas le dessin")
         self.assertFalse(item.opaque_at(-5.0, -5.0))
         self.assertFalse(item.opaque_at(1e6, 1e6))
+
+    def test_chaque_sprite_livre_remplit_sa_case(self) -> None:
+        """Un dessin doit offrir une cible confortable, où qu'il soit tiré.
+
+        Le sprite est choisi au hasard à chaque objet posé : un seul dessin
+        minuscule ou coincé dans un coin rendrait un objet sur six pénible à
+        attraper, et le défaut ne se manifesterait qu'une fois de temps en
+        temps — le pire cas pour le diagnostiquer.
+
+        Ce qu'on vérifie est donc le **cadrage**, pas un pixel précis. Tester
+        l'opacité du centre exact serait faux : la roue dentée a un moyeu creux,
+        et ne pas pouvoir attraper un trou est le comportement correct d'un
+        survol qui suit l'alpha.
+        """
+        from pet.ui.item import ASSET_DIR, ItemWindow
+
+        for fichier in sorted(ASSET_DIR.glob("*.png")):
+            item = ItemWindow("feed", fichier, 64)
+            image = item.pixmap.toImage()
+            w, h = image.width(), image.height()
+            lignes = [y for y in range(h)
+                      if any(image.pixelColor(x, y).alpha() > 25 for x in range(w))]
+            colonnes = [x for x in range(w)
+                        if any(image.pixelColor(x, y).alpha() > 25 for y in range(h))]
+            self.assertTrue(lignes and colonnes, "%s est vide" % fichier.name)
+
+            haut, bas = min(lignes), max(lignes)
+            gauche, droite = min(colonnes), max(colonnes)
+            self.assertGreater(bas - haut, h * 0.35,
+                               "%s est trop petit en hauteur" % fichier.name)
+            self.assertGreater(droite - gauche, w * 0.20,
+                               "%s est trop étroit" % fichier.name)
+            self.assertLess(abs((haut + bas) / 2.0 - h / 2.0), h * 0.18,
+                            "%s est décentré verticalement" % fichier.name)
+            self.assertLess(abs((gauche + droite) / 2.0 - w / 2.0), w * 0.18,
+                            "%s est décentré horizontalement" % fichier.name)
 
 
 class ConsumableInTwoStepsTest(unittest.TestCase):
