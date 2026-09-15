@@ -82,6 +82,11 @@ SHOP_COLUMNS = 4
 HOLD_SECONDS = 2.0
 HOLD_TICK_MS = 30
 
+# Grande icône des pages vides. Elle occupe la place que le contenu aurait
+# prise, et la mise en page lui réserve cette hauteur — sinon elle se superpose
+# à ce qui l'entoure.
+BIG_ICON = 62
+
 # -- animation (lot L9) ------------------------------------------------------
 #
 # Durées dissymétriques, et c'est voulu : on regarde une interface s'ouvrir, on
@@ -157,8 +162,10 @@ def _echelle_article(action: str) -> float:
     if article is None:
         return 0.56
     if article.instant:
-        return 0.62
-    return 0.40 + 0.22 * min(1.0, article.gain / 60.0)
+        return 0.58
+    # Autour du 0,56 de référence : le petit format en dessous, le grand
+    # au-dessus, sans jamais s'en écarter assez pour dépareiller.
+    return 0.44 + 0.20 * min(1.0, article.gain / 60.0)
 
 
 def _melange(a: QColor, b: QColor, t: float) -> QColor:
@@ -922,15 +929,18 @@ class CarePanel(QWidget):
             # existe déjà. Vide, la page le dit par une grande icône pâle plutôt
             # que par une rangée de cases grises.
             stock = sorted(self.session.consumables.items())
-            hauteur = haut + BUTTON + PAD
-            if stock:
-                hauteur += BUTTON + GAP
-            layout = Layout(height=hauteur, title=titre)
 
             if not stock:
+                # Vide, la page le dit par une grande icône pâle plutôt que par
+                # une rangée de cases grises — et le retour se place **sous**
+                # elle, pas dessus.
+                y = haut + BIG_ICON + GAP
+                layout = Layout(height=int(y + BUTTON + PAD), title=titre)
                 layout.big_icon = "inventory"
-                layout.buttons = self._row(("back",), haut)
+                layout.buttons = self._row(("back",), y)
                 return layout
+
+            layout = Layout(height=haut + 2 * BUTTON + GAP + PAD, title=titre)
 
             def dispo(action: str) -> bool:
                 # Un objet est déjà posé sur le bureau : tout ce qui s'y pose
@@ -1075,9 +1085,14 @@ class CarePanel(QWidget):
             self._entree_fin(painter, fini)
 
         if layout.big_icon:
-            # Boutique vide : l'icône en gris pâle dit « ici, plus tard ».
-            # Le catalogue et les tokens sont le lot L7.
-            boite = QRectF((WIDTH - 62) / 2.0, PAD + 7, 62, 62)
+            # Page vide : l'icône en gris pâle dit « il n'y a rien ici ».
+            #
+            # Posée sous le titre et non à une ordonnée fixe. Elle était calée
+            # sur `PAD + 7`, ce qui datait d'une page **sans** titre : depuis
+            # que l'inventaire en a un, elle lui passait au travers et le
+            # bouton de retour lui passait au travers à son tour.
+            boite = QRectF((WIDTH - BIG_ICON) / 2.0, self._top(),
+                           BIG_ICON, BIG_ICON)
             fini = self._entree_debut(painter, "grande_icone", boite.center())
             draw_icon(painter, layout.big_icon, boite, INK_OFF)
             self._entree_fin(painter, fini)
@@ -1422,10 +1437,16 @@ class CarePanel(QWidget):
             encre = INK
         painter.setBrush(fond)
         painter.drawRoundedRect(button.rect, RADIUS, RADIUS)
-        facteur = (_echelle_article(button.action)
-                   if button.action.startswith(("use:", "buy:")) else 1.0)
-        draw_icon(painter, button.icon,
-                  center_square(button.rect, facteur), encre)
+        # `center_square` a sa propre valeur par défaut, et c'est elle qui donne
+        # à tous les boutons le même air. Lui passer 1.0 — ce que faisait la
+        # première version de l'échelle des articles — remplit le bouton d'un
+        # bord à l'autre : l'icône ne se lit plus comme un pictogramme posé dans
+        # un carré, mais comme un aplat.
+        if button.action.startswith(("use:", "buy:")):
+            boite = center_square(button.rect, _echelle_article(button.action))
+        else:
+            boite = center_square(button.rect)
+        draw_icon(painter, button.icon, boite, encre)
 
     # -- interaction -------------------------------------------------------
 
