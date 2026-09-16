@@ -95,6 +95,24 @@ def care_sparks(banc: Particles, rect) -> int:
         x_spread=w * 0.36, y_spread=h * 0.04)
 
 
+def spray_mist(banc: Particles, rect, x: float, y: float) -> int:
+    """Jet du spray, né **à la buse** et non autour du robot (lot L15).
+
+    C'est ce qui la distingue de `care_sparks` : le halo de soin est une
+    réaction du robot, donc il l'entoure ; le jet est un geste de
+    l'utilisateur, donc il part de l'objet qu'il tient. Née au centre du robot,
+    la brume aurait eu l'air de sortir de lui.
+
+    Large ouverture et vie courte : une brume s'ouvre vite et retombe. Un jet
+    étroit et long se lirait comme un lance-flammes.
+    """
+    _, _, w, h = rect
+    return banc.burst(
+        SPARK, x, y, 14,
+        speed=h * 0.55, spread=0.85, life=0.42, size=h * 0.030, up=0.75,
+        x_spread=w * 0.05, y_spread=h * 0.03)
+
+
 def refusal_puff(banc: Particles, rect) -> int:
     """Petit refus : trois particules ambre, courtes. Un « non », pas un drame.
 

@@ -500,6 +500,9 @@ class FrameDemandTest(unittest.TestCase):
         w.dust = None
         w.rally = None
         w.cups = None
+        # Le bain du lot L15 : la mousse suit l'éponge à la main, donc le
+        # prédicat le lit aussi.
+        w.wash = None
         for cle, valeur in kwargs.items():
             setattr(w, cle, valeur)
         return w

@@ -448,6 +448,29 @@ def _validate_state(data: dict[str, Any]) -> dict[str, Any]:
                 kept[key] = min(seconds, 86400.0)
     data["cooldowns"] = kept
 
+    # Consommables : les quantités sont bornées, et les articles **retirés du
+    # catalogue sont convertis** plutôt que perdus (cf. `consumables.RETIRED`).
+    # Sans cette conversion, une sauvegarde d'avant le lot L15 afficherait dans
+    # l'inventaire des cases qu'on ne sait plus ni dessiner ni utiliser.
+    from ..brain.consumables import BY_KEY as _ARTICLES, RETIRED
+    stock: dict[str, int] = {}
+    brut = data.get("consumables")
+    if isinstance(brut, dict):
+        for cle, valeur in brut.items():
+            if not isinstance(cle, str):
+                continue
+            try:
+                nombre = int(valeur)
+            except (TypeError, ValueError):
+                continue
+            if nombre <= 0:
+                continue
+            cle = RETIRED.get(cle, cle)
+            if cle not in _ARTICLES:
+                continue
+            stock[cle] = stock.get(cle, 0) + nombre
+    data["consumables"] = stock
+
     name = data.get("name")
     data["name"] = name.strip()[:24] if isinstance(name, str) else ""
 

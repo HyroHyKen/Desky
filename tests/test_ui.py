@@ -729,7 +729,7 @@ class PanelMotionTest(unittest.TestCase):
         se jouer — c'est la transition de page qui fait office de retour. Seuls
         les boutons qui restent peuvent s'enfoncer et rebondir.
         """
-        panel.session.consumables = {"meal": 2, "wipe": 1}
+        panel.session.consumables = {"meal": 2, "kit": 1}
         panel.open_page("inventory")
         for bouton in panel._layout().buttons:
             if bouton.enabled and bouton.action.startswith("use:"):
@@ -858,7 +858,7 @@ class PanelMotionTest(unittest.TestCase):
         # Un objet de soin traîne déjà sur le bureau : les trois soins qui en
         # produisent un se grisent ensemble. C'est la façon la plus sûre
         # d'obtenir un bouton désactivé sans dépendre des délais du brain.
-        panel.session.consumables = {"meal": 1, "wipe": 1}
+        panel.session.consumables = {"meal": 1, "kit": 1}
         panel.item_pending = True
         panel.open_page("inventory")
         panel.open_panel()
@@ -2673,17 +2673,17 @@ class ItemPanelTest(unittest.TestCase):
 
         session = _FauxSession(Brain(), "Zig")
         session.appearance = {}
-        session.consumables = {"meal": 2, "wipe": 1, "battery": 1}
+        session.consumables = {"meal": 2, "kit": 1, "battery": 1}
         panel = CarePanel(session, generate(8))
         panel.open_page("inventory")
 
         offerts = {b.action: b.enabled for b in panel._layout().buttons}
-        for cle in ("use:meal", "use:wipe"):
+        for cle in ("use:meal", "use:kit"):
             self.assertTrue(offerts[cle])
 
         panel.item_pending = True
         offerts = {b.action: b.enabled for b in panel._layout().buttons}
-        for cle in ("use:meal", "use:wipe"):
+        for cle in ("use:meal", "use:kit"):
             self.assertFalse(offerts[cle], cle + " reste offert")
         self.assertTrue(offerts["use:battery"],
                         "la caresse ne dépend d'aucun objet")

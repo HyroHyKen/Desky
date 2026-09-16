@@ -118,9 +118,9 @@ class EconomyTest(unittest.TestCase):
     def test_le_stock_survit_au_redemarrage(self) -> None:
         s = self._session()
         s.economy.tokens = 10
-        s.buy_consumable("wipe", 3)
+        s.buy_consumable("kit", 3)
         s.flush(force=True)
-        self.assertEqual(self._session().count("wipe"), 3)
+        self.assertEqual(self._session().count("kit"), 3)
 
     def test_une_ancienne_sauvegarde_se_charge(self) -> None:
         """La migration est purement **additive** : `consumables` est absent des
@@ -155,8 +155,29 @@ class EconomyTest(unittest.TestCase):
         édition manuelle ou d'une migration ratée, et dans les deux cas le pet
         doit démarrer."""
         s = self._session()
-        s.store.set(consumables={"meal": "trois", "wipe": -2, "soap": 4})
-        self.assertEqual(s.consumables, {"soap": 4})
+        s.store.set(consumables={"meal": "trois", "kit": -2, "inconnu": 4})
+        self.assertEqual(s.consumables, {})
+
+    def test_les_articles_retires_deviennent_des_kits(self) -> None:
+        """Lot L15 : la lingette et le savon n'existent plus, mais ils ont été
+        **payés**. Les faire disparaître d'un inventaire serait une punition
+        rétroactive, et le §12 l'interdit. Ils valent un bain chacun.
+
+        Vérifié sur la session, qui est ce que voit l'inventaire, et non
+        seulement sur le fichier : c'est la session qui décide ce qui
+        s'affiche.
+        """
+        s = self._session()
+        s.store.set(consumables={"wipe": 2, "soap": 1, "meal": 1})
+        self.assertEqual(s.consumables, {"kit": 3, "meal": 1})
+
+    def test_un_article_inconnu_ne_reste_pas_dans_l_inventaire(self) -> None:
+        """Une clé venue d'une version plus récente, ou d'une édition à la
+        main, ne doit pas produire une case qu'on ne sait ni dessiner ni
+        utiliser."""
+        s = self._session()
+        s.store.set(consumables={"licorne": 5})
+        self.assertEqual(s.consumables, {})
 
 
 if __name__ == "__main__":

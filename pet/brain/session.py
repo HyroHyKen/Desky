@@ -220,7 +220,15 @@ class Session:
 
     @property
     def consumables(self) -> dict[str, int]:
-        """Quantités possédées, clé par clé. Les zéros n'y figurent pas."""
+        """Quantités possédées, clé par clé. Les zéros n'y figurent pas.
+
+        Les articles retirés du catalogue sont convertis ici comme ils le sont
+        au chargement (`consumables.RETIRED`), et les clés inconnues écartées :
+        l'inventaire ne doit contenir que des choses qu'on sait dessiner et
+        utiliser. Le faire des deux côtés n'est pas une redite — la sauvegarde
+        normalise le fichier une fois, cette propriété protège la session d'un
+        `store.set` direct.
+        """
         brut = self.store.data.get("consumables") or {}
         out: dict[str, int] = {}
         for cle, nombre in brut.items():
@@ -228,8 +236,12 @@ class Session:
                 quantite = int(nombre)
             except (TypeError, ValueError):
                 continue
-            if quantite > 0:
-                out[str(cle)] = quantite
+            if quantite <= 0:
+                continue
+            cle = consumables.RETIRED.get(str(cle), str(cle))
+            if cle not in consumables.BY_KEY:
+                continue
+            out[cle] = out.get(cle, 0) + quantite
         return out
 
     def count(self, key: str) -> int:
@@ -267,18 +279,24 @@ class Session:
         self.store.set(consumables=stock)
         return True
 
-    def apply_consumable(self, key: str) -> dict[str, float]:
+    def apply_consumable(self, key: str, factor: float = 1.0) -> dict[str, float]:
         """Applique l'effet d'un consommable **déjà retiré du stock**.
 
         Séparé de `use_consumable` parce que les deux moments ne coïncident
         pas : un article posé sur le bureau quitte le stock tout de suite — sans
         quoi on en sèmerait dix — mais n'agit qu'une fois le robot arrivé. La
         pile, elle, fait les deux dans la même seconde.
+
+        `factor` sert aux articles à rituel (lot L15) : un bain interrompu à
+        mi-chemin rend la moitié du soin. C'est un **facteur** et non un gain
+        libre, pour que le catalogue reste la seule source de ce que vaut un
+        article — un appelant ne doit pas pouvoir décider qu'un kit rend 300.
         """
         article = consumables.get(key)
         if article is None:
             return {}
-        applied = self.brain.needs.apply({article.need: article.gain})
+        part = max(0.0, min(1.0, float(factor)))
+        applied = self.brain.needs.apply({article.need: article.gain * part})
         if applied:
             self.flush(force=True)
         return applied

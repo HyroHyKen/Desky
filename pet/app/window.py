@@ -49,7 +49,7 @@ from ..render.context import RenderContext
 from ..render.glyphs import GLYPH_FOR_NEED
 from ..render.scene import Scene
 from ..ui.item import ItemWindow, SpritePicker
-from ..ui import sparks
+from ..ui import foam, sparks
 from ..ui.dust import ParticleWindow
 from ..ui.panel import CarePanel
 from ..state.save import Store
@@ -61,7 +61,7 @@ from .ground import (                                           # noqa: F401
     choose_monitor, floor_y, frac_to_position, position_to_frac,
 )
 from .parts import (BehaviourMixin, CareMixin, DiagnosticsMixin, GamesMixin,
-                    ItemsMixin, OnboardingMixin)
+                    ItemsMixin, OnboardingMixin, WashMixin)
 from .parts.behaviour import BUBBLE_POP_OMEGA, BUBBLE_POP_ZETA
 # Réexportées : elles vivent désormais avec le code qui les utilise, mais
 # `INTRO_SCRIPTED` est lue par les tests depuis ce module, et rien ne justifie
@@ -134,8 +134,8 @@ FALL_DRAG = 1.1               # amortissement de la composante horizontale
 
 
 
-class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
-                CareMixin, DiagnosticsMixin, QWidget):
+class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, WashMixin,
+                OnboardingMixin, CareMixin, DiagnosticsMixin, QWidget):
     """Fenêtre du pet."""
 
     # La sortie est décidée par le bootstrap, pas par la fenêtre : une fenêtre
@@ -260,6 +260,15 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
         self.cups = None
         self.cups_window = None
         self._aim_cache = None
+
+        # Bain en cours (lot L15). `wash` porte les règles, `wash_tool` l'outil
+        # qu'on tient — éponge puis spray. Les deux sont nuls la plupart du
+        # temps : un bain est un moment, pas un état du robot.
+        self.wash = None
+        self.wash_tool = None
+        self.wash_article = ""
+        self._wash_idle = 0.0
+        self._wash_outro = 0.0
         self._aim_age = 0.0
         self._sleep_t = 0.0
         self._abonnements: list[tuple[str, object]] = []
@@ -620,6 +629,9 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
         self._look_point = self._look_target(dt, pw)
         self._step_intro(dt)
         self._step_item(dt)
+        # Le bain avance lui aussi à la cadence du rendu : c'est un geste de la
+        # main, et une mousse posée quatre fois par seconde ferait des paquets.
+        self._step_wash(dt)
         self._step_locomotion(dt, t, pw, ph)
         self._step_bubble(dt, t)
         if self.panel_open:
@@ -684,6 +696,10 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
         painter = QPainter(self)
         # Source déjà prémultipliée : la composition par défaut est la bonne.
         painter.drawImage(0, 0, self._qimage)
+        # La mousse par-dessus, et jamais dans le FBO : elle changerait sinon
+        # l'alpha que lit le hit-testing (voir `ui/foam`).
+        if self.wash is not None and self.wash.foam:
+            foam.paint(painter, self.wash.foam, self.width(), self.height())
         painter.end()
         self._t_paint += time.perf_counter() - _t_enter
         self._paints += 1
@@ -777,6 +793,13 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
             loco.yield_to_user(centre)
             return
         if self.panel_open or self._intro_phase in INTRO_SCRIPTED:
+            loco.hold(centre)
+            return
+
+        # Pendant le bain il se tient tranquille : on ne court pas après un
+        # robot l'éponge à la main. `hold` et non `yield_to_user` — il n'est pas
+        # manipulé, il attend (cf. `parts/wash`).
+        if self.washing:
             loco.hold(centre)
             return
 
@@ -939,6 +962,10 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
             return True
         if self.playing or self.playing_cups:
             return True
+        # Un bain se joue à la main : la mousse doit suivre l'éponge sans
+        # traîner derrière elle.
+        if self.washing:
+            return True
         return False
 
     # -- hit-testing ---------------------------------------------------------
@@ -1040,6 +1067,11 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (API Qt)
         if event.button() == Qt.MouseButton.RightButton:
+            # Pendant un bain, le menu reste fermé : ancré au-dessus de la tête,
+            # il cacherait exactement ce qu'on est en train de laver, et le geste
+            # en cours tient déjà les deux mains de l'utilisateur.
+            if self.washing:
+                return
             self.toggle_panel()
             return
 
@@ -1124,6 +1156,9 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, OnboardingMixin,
             self.dust.close()
             self.dust = None
         self._close_item()
+        # Avant le `flush` qui suit : un bain en cours crédite ce qui a été
+        # fait, et ce crédit doit partir dans la même écriture.
+        self._cancel_wash()
         if self.panel is not None:
             self.panel.close()
         # Enregistrement de l'état vivant avant tout le reste : le §14 demande

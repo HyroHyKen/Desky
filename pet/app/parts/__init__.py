@@ -21,6 +21,7 @@ from .diag import DiagnosticsMixin
 from .games import GamesMixin
 from .items import ItemsMixin
 from .onboarding import OnboardingMixin
+from .wash import WashMixin
 
 __all__ = ["BehaviourMixin", "CareMixin", "DiagnosticsMixin", "GamesMixin",
-           "ItemsMixin", "OnboardingMixin"]
+           "ItemsMixin", "OnboardingMixin", "WashMixin"]

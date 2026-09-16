@@ -48,7 +48,7 @@ lot L7.
 
 ## Tests
 
-466 tests, en `unittest` de la bibliothèque standard — aucune dépendance de test
+755 tests, en `unittest` de la bibliothèque standard — aucune dépendance de test
 ajoutée.
 
 ```bash

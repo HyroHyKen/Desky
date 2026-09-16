@@ -129,13 +129,25 @@ class ItemsMixin:
             self._consume_item(item)
 
     def _consume_item(self, item: ItemWindow) -> None:
+        """Le robot et l'objet se sont rejoints.
+
+        Deux issues depuis le lot L15. La plupart des articles rendent leur
+        effet ici, au contact — c'est le cas de toute la nourriture. Ceux qui
+        portent une `sequence` ouvrent au contraire un **rituel** : le kit de
+        bain ne remonte rien en arrivant, il sort une éponge. Le contact n'est
+        plus la fin du soin, il en est le début.
+        """
         if not item.consume():
+            return
+        article = consumables.get(item.consumable)
+        if self.locomotion is not None:
+            self.locomotion.stop()
+        if article is not None and article.sequence == "wash":
+            self._start_wash(item)
             return
         applied = self.session.apply_consumable(item.consumable)
         if applied:
             self._celebrate_care(item.consumable, applied)
-        if self.locomotion is not None:
-            self.locomotion.stop()
 
     def _sync_panel_items(self) -> None:
         """Tient le panneau au courant : un soin par objet n'est offert que

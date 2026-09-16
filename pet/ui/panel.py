@@ -325,8 +325,7 @@ TOOLTIP_CATEGORY = "Voir les %s"
 CONSUMABLE_LABELS: dict[str, str] = {
     "snack": "En-cas",
     "meal": "Repas",
-    "wipe": "Lingette",
-    "soap": "Savon",
+    "kit": "Kit de bain",
     "battery": "Pile",
 }
 TOOLTIP_BUY = "%s — %d jetons"

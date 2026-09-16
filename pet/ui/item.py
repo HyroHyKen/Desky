@@ -39,6 +39,27 @@ ITEM_KINDS: dict[str, str] = {
 
 ASSET_DIR = resources.resource_dir("assets", "items")
 
+# Sprites qui portent le **rituel du bain** (lot L15) et non un objet posable :
+# l'éponge et le spray sont les deux outils du kit, sortis par la séquence de
+# nettoyage, jamais tirés au sort comme objet de soin.
+#
+# Une liste d'exclusion plutôt qu'un préfixe à part, pour garder la règle du lot
+# L7 : déposer un `clean_*.png` dans le dossier suffit à obtenir une nouvelle
+# variété de kit, sans toucher au code. Seuls ces deux noms sont réservés.
+TOOL_SPRITES: dict[str, str] = {
+    "sponge": "clean_sponge.png",
+    "spray": "clean_spray.png",
+}
+
+
+def tool_sprite(name: str) -> Path | None:
+    """Fichier d'un outil du bain, ou `None` s'il manque à l'installation."""
+    fichier = TOOL_SPRITES.get(name)
+    if fichier is None:
+        return None
+    chemin = ASSET_DIR / fichier
+    return chemin if chemin.is_file() else None
+
 # Taille de l'objet, en part de la hauteur du pet. Assez gros pour se voir et
 # s'attraper à la souris, assez petit pour que le robot reste le sujet.
 SIZE_RATIO = 0.34
@@ -73,7 +94,9 @@ def available_sprites(kind: str, directory: Path | None = None) -> list[Path]:
     base = directory if directory is not None else ASSET_DIR
     if not base.is_dir():
         return []
-    return sorted(base.glob(prefix + "_*.png"))
+    reserves = set(TOOL_SPRITES.values())
+    return sorted(p for p in base.glob(prefix + "_*.png")
+                  if p.name not in reserves)
 
 
 class SpritePicker:
@@ -111,9 +134,13 @@ class ItemWindow(QWidget):
 
     def __init__(self, kind: str, sprite: Path | None, side: int,
                  parent: QWidget | None = None,
-                 consumable: str = "") -> None:
+                 consumable: str = "", tool: bool = False) -> None:
         super().__init__(parent)
         self.kind = kind
+        # Un **outil** appartient à une séquence en cours (le bain du lot L15) :
+        # il n'a pas de durée de vie propre et ne s'évapore pas sous la main de
+        # celui qui s'en sert. C'est la séquence qui le retire.
+        self.tool = bool(tool)
         # Article dont il provient. L'objet posé doit savoir **ce qu'il rend**
         # une fois rejoint, et ce qu'il faut rembourser s'il s'évapore : deux
         # gamelles de prix différents posent le même sprite.
@@ -139,6 +166,9 @@ class ItemWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFixedSize(side, side)
 
+        # Gardé pour pouvoir dire **lequel** : deux outils du bain se
+        # ressemblent comme deux fenêtres, et seule leur image les distingue.
+        self.sprite = sprite
         self.pixmap = QPixmap(str(sprite)) if sprite is not None else QPixmap()
         if not self.pixmap.isNull():
             self.pixmap = self.pixmap.scaled(
@@ -277,8 +307,10 @@ class ItemWindow(QWidget):
             self._apply()
             return True
 
-        # Posé : il attend, et finit par s'évaporer.
-        if self._t >= TTL_SECONDS:
+        # Posé : il attend, et finit par s'évaporer. Un outil, lui, attend
+        # indéfiniment : le faire disparaître au milieu d'un bain retirerait
+        # l'éponge des mains de l'utilisateur.
+        if not self.tool and self._t >= TTL_SECONDS:
             self.state = "expiring"
             self._t = 0.0
             return True

@@ -43,6 +43,12 @@ class Consumable:
     pas une chose qu'on pose et que le robot va chercher, c'est une chose qu'on
     lui met. La faire traverser l'écran serait une petite comédie sans intérêt,
     et surtout on l'achète précisément quand il est trop épuisé pour marcher.
+
+    `sequence` marque au contraire ce qui, une fois rejoint, **ouvre un
+    rituel** au lieu de remonter la jauge sur-le-champ. Les trois valeurs
+    possibles sont donc les trois moments où un article peut agir : tout de
+    suite (`instant`), au contact (le défaut), ou au bout d'un geste tenu
+    (`sequence`). Elles s'excluent, et rien ne les mélange.
     """
 
     key: str
@@ -51,11 +57,19 @@ class Consumable:
     price: int
     kind: str = "food"
     instant: bool = False
+    sequence: str = ""
 
 
-# Le catalogue. Deux rayons de nourriture et de nettoyage à un ou deux jetons —
-# le prix suit ce que l'article remonte — et la pile à cinq, qui est d'un autre
-# ordre : elle ne remonte pas une jauge, elle la remplit.
+# Le catalogue. Un rayon de nourriture à un ou deux jetons — le prix suit ce que
+# l'article remonte —, la pile à cinq, qui est d'un autre ordre puisqu'elle ne
+# remonte pas une jauge mais la remplit, et le kit de bain.
+#
+# **Le rayon nettoyage n'a plus qu'un article, et c'est le sujet du lot L15.**
+# La lingette et le savon étaient le même geste à deux doses : on posait, le
+# robot venait, la jauge montait d'autant. Deux articles pour une seule action
+# n'offraient pas un choix, seulement une arithmétique. Le kit les remplace tous
+# les deux et remet l'hygiène à fond, parce qu'il ne se mesure plus en points :
+# on lave un robot jusqu'à ce qu'il soit propre, pas de 26 %.
 #
 # À un jeton par partie et cinq par record, une gamelle se gagne en une partie
 # et la pile en cinq. C'est le rythme voulu : de quoi s'occuper de lui en jouant
@@ -65,11 +79,17 @@ CONSUMABLES: tuple[Consumable, ...] = (
     Consumable("snack", "hunger", 22.0, 1, kind="feed"),
     Consumable("meal", "hunger", 52.0, 2, kind="feed"),
     # --- nettoyage --------------------------------------------------------
-    Consumable("wipe", "hygiene", 26.0, 1, kind="clean"),
-    Consumable("soap", "hygiene", 62.0, 2, kind="clean"),
+    Consumable("kit", "hygiene", 100.0, 2, kind="clean", sequence="wash"),
     # --- énergie ----------------------------------------------------------
     Consumable("battery", "energy", 100.0, 5, instant=True),
 )
+
+# Ce que deviennent les articles retirés du catalogue, au chargement d'une
+# sauvegarde antérieure. Ils ont été **payés** : les faire disparaître serait
+# une punition rétroactive, et le §12 l'interdit. Une lingette comme un savon
+# valent un bain — l'utilisateur y gagne, ce qui est le bon sens d'une
+# migration.
+RETIRED: dict[str, str] = {"wipe": "kit", "soap": "kit"}
 
 BY_KEY: dict[str, Consumable] = {c.key: c for c in CONSUMABLES}
 

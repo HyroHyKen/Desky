@@ -50,6 +50,10 @@ EVENTS: frozenset[str] = frozenset({
     "page_changee",             # {page}
     "bouton_active",            # {action}
     "bouton_refuse",            # {action} — cliqué alors qu'il est grisé
+    # Bain (lot L15)
+    "bain_commence",
+    "bain_rince",               # la mousse est partie, on passe au spray
+    "bain_fini",                # {complet} — faux si abandonné en chemin
     # Soin et économie
     "soin_accepte",             # {soin}
     "article_achete",           # {emplacement, cle}

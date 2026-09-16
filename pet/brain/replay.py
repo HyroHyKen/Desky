@@ -64,7 +64,7 @@ CARE_THRESHOLD = 40.0
 # besoins tiennent-ils dans une bande saine avec un soin normal », pas « le
 # joueur a-t-il assez de jetons ». Cette seconde question est celle de
 # l'économie, et elle se règle par le prix, pas ici.
-CONSUMABLE_FOR_NEED = {"hunger": "meal", "hygiene": "soap"}
+CONSUMABLE_FOR_NEED = {"hunger": "meal", "hygiene": "kit"}
 CARE_FOR_NEED = {"fun": "pet"}
 
 # Échanges d'une partie type dans la simulation. Une partie honnête sans être
