@@ -177,16 +177,34 @@ def _build_rig(d: Dimensions) -> Rig:
     # exprimée dans le repère du crâne, et ce nœud sera le pivot du visage SDF
     # du lot L3 puis de ses expressions au lot L4.
     #
-    # Sur un monobloc, ce nœud descend au **centre de la coque** et non au
-    # centre d'une tête qui n'existe pas : la dalle y est un morceau de la
-    # surface de la coque, donc son ellipsoïde de référence doit être celui de
-    # la coque, centré au même endroit (cf. `_face_part`).
+    # **Sur un monobloc, la dalle est accrochée à `body_flex`**, comme la coque
+    # dont elle est un morceau de surface, et non à la tête.
+    #
+    # La différence ne se voit qu'à l'écrasement, et elle est totale. `body.flex`
+    # pose une échelle `(w, s, w)` sur `body_flex` : la coque s'aplatit et
+    # s'élargit, à volume conservé. Une dalle accrochée à la tête ne reçoit que
+    # des translations — elle garde sa taille pendant que la coque grossit de
+    # 6 % en profondeur, et la coque l'avale. Mesuré : à `flex = -0,12` l'écran
+    # a entièrement disparu dans le bloc, et il ressortait par le bas aux
+    # valeurs plus fortes.
+    #
+    # Accrochée au même nœud que la coque, avec l'origine de la coque pour
+    # translation, elle subit exactement la même transformation : la relation
+    # entre les deux surfaces est alors vraie par construction, à toute échelle,
+    # au lieu d'être rattrapée déformation par déformation. C'est aussi ce que
+    # le châssis raconte — la dalle ne bouge pas de son bloc, le lot L17 avait
+    # déjà annulé pour elle le lacet et le tangage de tête.
+    #
+    # `shell_b - body_b` est le centre de la coque dans le repère de
+    # `body_flex`, c'est-à-dire l'offset du maillage de coque, au signe près :
+    # les deux se lisent ensemble (cf. `_shell_part`).
     if d.monobloc:
-        face_y = d.shell_b - (2.0 * d.body_b + d.neck_h - sink)
+        rig.add(Node("face", parent="body_flex",
+                     translation=np.array([0.0, d.shell_b - d.body_b, 0.0],
+                                          dtype="f4")))
     else:
-        face_y = d.head_b
-    rig.add(Node("face", parent="head",
-                 translation=np.array([0.0, face_y, 0.0], dtype="f4")))
+        rig.add(Node("face", parent="head",
+                     translation=np.array([0.0, d.head_b, 0.0], dtype="f4")))
     return rig
 
 

@@ -276,35 +276,70 @@ class RespirationTest(unittest.TestCase):
                     self._pieds(chassis, flex), 0.0, places=2,
                     msg="%s, flex %.2f" % (chassis, flex))
 
-    def test_le_visage_ne_glisse_pas_sur_le_bloc(self) -> None:
-        """Ce que `carrier_top` sert vraiment à tenir.
+    def test_le_visage_ne_glisse_pas_sur_son_porteur(self) -> None:
+        """La dalle doit rester **au même endroit de la surface** qui la porte.
 
-        La dalle est portée par `face`, qui pend sous `neck` — un nœud que
-        l'échelle de `body_flex` n'atteint pas. Sa remontée doit donc être
-        recopiée à la main, et la hauteur à recopier n'est pas la même selon le
-        châssis. Se tromper ne déplace pas les pieds, donc le test précédent ne
-        le voit pas : ça fait **glisser le visage sur la coque** à chaque
-        atterrissage, ce qui se mesure ici en écart au sommet.
+        Mesuré en proportions et non en distances, et c'est tout le sujet du
+        défaut corrigé après le lot L22. La dalle d'un monobloc est accrochée à
+        `body_flex`, donc elle subit l'échelle `(w, s, w)` de l'écrasement comme
+        la coque : un écart absolu au sommet **doit** changer avec `s`, puisque
+        tout le bloc change de taille. Ce qui ne doit pas changer, c'est la part
+        de la coque qui sépare les deux.
+
+        Accrochée à la tête — un nœud que l'échelle n'atteint pas —, elle gardait
+        au contraire sa taille pendant que la coque grossissait en profondeur, et
+        la coque l'avalait : à `flex = -0,12` l'écran disparaissait entièrement,
+        et il ressortait par le bas aux valeurs plus fortes. D'où la seconde
+        vérification, qui est la vraie : la **saillie** de la dalle, en part de
+        la profondeur de son porteur.
+
+        Sur une capsule, rien de tout cela ne bouge : ni la tête ni la dalle ne
+        reçoivent l'échelle, et les deux rapports sont constants pour la raison
+        la plus simple qui soit.
         """
         for chassis in CHASSIS:
             nom = "shell" if chassis == "monobloc" else "head"
-            ecarts = []
+            hauteurs, profondeurs = [], []
             for flex in (0.0, -0.10, 0.09):
                 robot = build(_genome(11, chassis))
                 pose = RigPose(robot.rig, robot.base_pose)
                 apply_channels(pose, {"body.flex": flex}, robot.dims)
                 matrices = {p.name: m for p, m in robot.part_matrices()}
-                haut = {}
+                haut, avant, taille = {}, {}, {}
                 for cible in (nom, "face"):
                     part = next(p for p in robot.parts if p.name == cible)
                     v = part.mesh.positions
-                    monde = (matrices[cible] @ np.c_[v, np.ones(len(v))].T).T[:, :3]
+                    monde = (matrices[cible]
+                             @ np.c_[v, np.ones(len(v))].T).T[:, :3]
                     haut[cible] = float(monde[:, 1].max())
-                ecarts.append(haut[nom] - haut["face"])
+                    avant[cible] = float(monde[:, 2].max())
+                    taille[cible] = (float(monde[:, 1].max())
+                                     - float(monde[:, 1].min()))
+                hauteurs.append((haut[nom] - haut["face"]) / taille[nom])
+                profondeurs.append(avant["face"] / avant[nom])
+                # La vraie condition pour voir un écran : à la hauteur de la
+                # dalle, la dalle est devant la surface qui la porte. Comparer
+                # les maxima globaux ne dirait rien — le porteur est le plus
+                # large à son équateur, la dalle est ailleurs.
+                v = next(p for p in robot.parts if p.name == "face").mesh.positions
+                dalle = (matrices["face"] @ np.c_[v, np.ones(len(v))].T).T[:, :3]
+                sommet = dalle[int(np.argmax(dalle[:, 2]))]
+                v = next(p for p in robot.parts if p.name == nom).mesh.positions
+                porteur = (matrices[nom] @ np.c_[v, np.ones(len(v))].T).T[:, :3]
+                bande = porteur[np.abs(porteur[:, 1] - sommet[1])
+                                < 0.06 * taille[nom]]
+                self.assertGreater(
+                    float(sommet[2]), float(bande[:, 2].max()),
+                    msg="%s, flex %.2f : la dalle est passée sous la surface"
+                        % (chassis, flex))
             self.assertAlmostEqual(
-                max(ecarts), min(ecarts), places=2,
-                msg="%s : le visage glisse de %.3f sous l'écrasement"
-                    % (chassis, max(ecarts) - min(ecarts)))
+                max(hauteurs), min(hauteurs), places=2,
+                msg="%s : le visage glisse en hauteur de %.3f"
+                    % (chassis, max(hauteurs) - min(hauteurs)))
+            self.assertAlmostEqual(
+                max(profondeurs), min(profondeurs), places=2,
+                msg="%s : la dalle s'enfonce de %.3f sous l'écrasement"
+                    % (chassis, max(profondeurs) - min(profondeurs)))
 
     def test_le_sommet_porteur_suit_le_chassis(self) -> None:
         capsule = proportions.dimensions(_genome(11, "capsule"))
