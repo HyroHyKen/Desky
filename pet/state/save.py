@@ -410,6 +410,21 @@ STATE_DEFAULTS: dict[str, Any] = {
     "tokens_day": "",
     "tokens_today": 0,
     "inventory": [],
+    # Date de naissance du robot, en horloge murale (lot L22). Zéro veut dire
+    # « inconnue » : c'est le cas des sauvegardes antérieures, que
+    # `estimate_birth` rattrape au chargement.
+    "born_at": 0.0,
+    # Compteurs des trophées, `mesure -> nombre`. Un dictionnaire plutôt qu'un
+    # champ par compteur, pour la même raison que `best_scores` : le trophée
+    # suivant ne doit pas demander de migration de schéma.
+    "stats": {},
+    # Trophées obtenus, `clé -> date`. La date sert à l'affichage et à rien
+    # d'autre ; c'est la **présence** de la clé qui fait foi.
+    "achievements": {},
+    # Trophées dont la récompense a été encaissée. Séparé d'`achievements` :
+    # débloquer et réclamer sont deux moments distincts, et les confondre
+    # verserait les jetons sans que personne ait rien demandé.
+    "claimed": [],
 }
 
 
@@ -495,7 +510,79 @@ def _validate_state(data: dict[str, Any]) -> dict[str, Any]:
     inventory = data.get("inventory")
     data["inventory"] = (sorted({str(i) for i in inventory} & set(BY_KEY))
                          if isinstance(inventory, list) else [])
+
+    # --- trophées (lot L22) ------------------------------------------------
+    #
+    # Une naissance postérieure à maintenant viendrait d'une horloge qui a
+    # reculé depuis. La ramener à l'instant présent évite un âge négatif, de la
+    # même façon que pour `last_seen`.
+    try:
+        naissance = float(data.get("born_at", 0.0))
+    except (TypeError, ValueError):
+        naissance = 0.0
+    data["born_at"] = max(0.0, min(naissance, time.time()))
+
+    from ..brain import achievements
+    compteurs: dict[str, float] = {}
+    brut = data.get("stats")
+    if isinstance(brut, dict):
+        for cle, valeur in brut.items():
+            # Les mesures dérivées ne sont pas stockées : l'âge et les records
+            # se calculent ailleurs, et en garder une copie ici donnerait deux
+            # vérités dont l'une serait périmée.
+            if cle in achievements.DERIVEES or not isinstance(cle, str):
+                continue
+            try:
+                compteurs[cle] = max(0.0, float(valeur))
+            except (TypeError, ValueError):
+                continue
+    data["stats"] = compteurs
+
+    obtenus: dict[str, float] = {}
+    brut = data.get("achievements")
+    if isinstance(brut, dict):
+        for cle, quand in brut.items():
+            if cle not in achievements.BY_KEY:
+                continue
+            try:
+                obtenus[cle] = max(0.0, float(quand))
+            except (TypeError, ValueError):
+                obtenus[cle] = 0.0
+    data["achievements"] = obtenus
+
+    # Réclamer suppose d'avoir obtenu : une clé encaissée sans trophée derrière
+    # viendrait d'une édition manuelle, et la garder ferait disparaître une
+    # récompense que l'utilisateur n'a jamais touchée.
+    encaisses = data.get("claimed")
+    data["claimed"] = (sorted({str(c) for c in encaisses} & set(obtenus))
+                       if isinstance(encaisses, list) else [])
     return data
+
+
+def estimate_birth(when: float | None = None) -> float:
+    """Date de naissance d'un robot qui n'en a jamais eu d'enregistrée.
+
+    Les trophées de temps sont arrivés bien après les premiers robots, et faire
+    naître aujourd'hui un pet qu'on a depuis trois mois serait un mensonge dans
+    le sens qui dérange — celui qui reprend du temps déjà passé ensemble.
+
+    Le repère est la **création de `debug.log`**, et c'est le seul fichier du
+    répertoire qui puisse servir : `pet.json` et `state.json` sont réécrits par
+    `os.replace`, qui leur redonne une date de création à chaque enregistrement.
+    Vérifié sur un poste en service, ils affichaient tous deux le jour même
+    quand le journal, ouvert en ajout et jamais remplacé, avait six jours.
+
+    Le repli est l'instant présent. Il n'est pas faux, seulement prudent : sans
+    journal, on ne sait rien, et dater la naissance d'aujourd'hui ne retire à
+    personne un trophée déjà gagné.
+    """
+    maintenant = time.time() if when is None else float(when)
+    journal = app_dir() / "debug.log"
+    try:
+        cree = journal.stat().st_ctime
+    except OSError:
+        return maintenant
+    return max(0.0, min(float(cree), maintenant))
 
 
 # Paramètres de génome que l'utilisateur peut choisir, et leurs valeurs

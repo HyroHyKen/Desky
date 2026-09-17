@@ -42,6 +42,7 @@ from ..anim.layers import AnimContext, Animator
 from ..anim.locomotion import Locomotion, Terrain
 from ..brain.session import Session
 from ..brain.sensors import Sensors
+from ..brain.tracker import Suivi
 from ..brain.utility import Plan, SelfState
 from ..feedback import bus
 from ..geometry.builder import Robot, build
@@ -52,6 +53,7 @@ from ..ui.item import ItemWindow, SpritePicker
 from ..ui import foam, sparks
 from ..ui.dust import ParticleWindow
 from ..ui.panel import CarePanel
+from ..ui.toast import Toast
 from ..state.save import Store
 from . import win32
 from .clock import Regime, RenderClock
@@ -271,6 +273,14 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, WashMixin,
         self._wash_outro = 0.0
         self._aim_age = 0.0
         self._sleep_t = 0.0
+
+        # Trophées (lot L22). Le suivi s'abonne au bus et ne connaît ni la
+        # fenêtre ni Qt ; la bannière, elle, est construite au premier trophée
+        # — la plupart des sessions n'en débloqueront aucun.
+        self.trophies = Suivi(self.session)
+        self.trophies.subscribe()
+        self.toast: Toast | None = None
+
         self._abonnements: list[tuple[str, object]] = []
         self._subscribe_effects()
         self._t0 = time.perf_counter()
@@ -841,6 +851,8 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, WashMixin,
         """
         for nom, fonction in (("atterri", self._on_landed),
                               ("soin_accepte", self._on_care_sparks),
+                              ("succes_debloque", self._on_trophy),
+                              ("recompense_encaissee", self._on_reward_sparks),
                               ("achat_refuse", self._on_refusal)):
             bus.subscribe(nom, fonction)
             self._abonnements.append((nom, fonction))
@@ -872,6 +884,31 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, WashMixin,
 
     def _on_refusal(self, emplacement: str, cle: str, raison: str) -> None:
         sparks.refusal_puff(self._ensure_dust().banc, self._pet_rect())
+
+    def _on_reward_sparks(self, cle: str, jetons: int) -> None:
+        # La même gerbe qu'un soin accepté, et c'est voulu : « quelque chose de
+        # bien vient d'arriver » est une seule idée, elle n'a pas à s'exprimer
+        # en deux vocabulaires. Le fait, lui, reste distinct — encaisser une
+        # récompense n'est pas recevoir un soin.
+        sparks.care_sparks(self._ensure_dust().banc, self._pet_rect())
+
+    def _on_trophy(self, cle: str) -> None:
+        """Un trophée vient de tomber : la bannière l'annonce (lot L22).
+
+        Elle est posée sur **l'écran du robot** et non sur l'écran principal :
+        sur un montage à deux moniteurs, une annonce qui paraît là où le pet
+        n'est pas se rate une fois sur deux.
+        """
+        from ..brain.achievements import BY_KEY
+
+        trophee = BY_KEY.get(cle)
+        if trophee is None:
+            return
+        if self.toast is None:
+            self.toast = Toast()
+        self.toast.set_corner(self.current_monitor().work,
+                              max(1.0, self.devicePixelRatioF()))
+        self.toast.annoncer(trophee.titre)
 
     def _step_particles(self, dt: float) -> None:
         """Avance le calque, et laisse tomber un « Z » quand le pet dort.
@@ -1144,6 +1181,10 @@ class PetWindow(BehaviourMixin, GamesMixin, ItemsMixin, WashMixin,
 
     def shutdown(self) -> None:
         self._unsubscribe_effects()
+        self.trophies.unsubscribe()
+        if self.toast is not None:
+            self.toast.close()
+            self.toast = None
         self.stop_rally()
         self.stop_cups()
         if self.cups_window is not None:

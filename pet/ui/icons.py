@@ -377,6 +377,91 @@ def _check(path: QPainterPath) -> None:
     path.addPath(stroker.createStroke(trait))
 
 
+def _clock(path: QPainterPath) -> None:
+    """Horloge — le temps passé ensemble.
+
+    Aiguilles à dix heures dix, comme sur toutes les vitrines d'horloger : à
+    midi pile elles se confondent, et l'icône n'a plus qu'un trait.
+    """
+    cadran = QPainterPath()
+    cadran.addEllipse(QRectF(10.0, 10.0, 80.0, 80.0))
+    creux = QPainterPath()
+    creux.addEllipse(QRectF(20.0, 20.0, 60.0, 60.0))
+    cadran.addPath(creux.toReversed())
+    path.addPath(cadran)
+
+    aiguilles = QPainterPath()
+    aiguilles.moveTo(50.0, 50.0)
+    aiguilles.lineTo(50.0, 28.0)
+    aiguilles.moveTo(50.0, 50.0)
+    aiguilles.lineTo(70.0, 58.0)
+    stroker = QPainterPathStroker()
+    stroker.setWidth(9.0)
+    stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+    path.addPath(stroker.createStroke(aiguilles))
+
+
+def _cake(path: QPainterPath) -> None:
+    """Gâteau — l'anniversaire. Une bougie, parce qu'il n'y en a qu'un."""
+    # Le glaçage déborde de part et d'autre, et une rainure l'en sépare : sans
+    # elle, les deux rectangles fusionnent en un bloc qui se lit « valise ».
+    gateau = QPainterPath()
+    _rounded(gateau, 18.0, 52.0, 64.0, 36.0, 8.0)
+    _rounded(gateau, 11.0, 44.0, 78.0, 16.0, 8.0)
+    rainure = QPainterPath()
+    rainure.addRect(QRectF(21.0, 59.0, 58.0, 4.0))
+    gateau.addPath(rainure.toReversed())
+    path.addPath(gateau)
+
+    _rounded(path, 46.0, 24.0, 8.0, 20.0, 4.0)
+    # La flamme est **détachée** de la mèche. Collée, elle prolongeait la bougie
+    # et l'ensemble se lisait comme une antenne.
+    flamme = QPainterPath()
+    flamme.moveTo(50.0, 2.0)
+    flamme.quadTo(63.0, 12.0, 50.0, 20.0)
+    flamme.quadTo(37.0, 12.0, 50.0, 2.0)
+    path.addPath(flamme)
+
+
+def _trophy(path: QPainterPath) -> None:
+    """Coupe — les trophées, et le bouton qui mène à leur page."""
+    coupe = QPainterPath()
+    coupe.moveTo(28.0, 14.0)
+    coupe.lineTo(72.0, 14.0)
+    coupe.lineTo(69.0, 40.0)
+    coupe.quadTo(66.0, 62.0, 50.0, 62.0)
+    coupe.quadTo(34.0, 62.0, 31.0, 40.0)
+    coupe.closeSubpath()
+    path.addPath(coupe)
+    # Les anses sont des anneaux ouverts posés de part et d'autre : dessinées
+    # pleines, elles alourdissent la coupe au point qu'on y voit un vase.
+    for gauche in (True, False):
+        rect = (QRectF(8.0, 18.0, 30.0, 30.0) if gauche
+                else QRectF(62.0, 18.0, 30.0, 30.0))
+        path.addPath(_stroked_arc(rect, 90.0 if gauche else 90.0,
+                                  180.0 if gauche else -180.0, 8.0))
+    _rounded(path, 44.0, 60.0, 12.0, 16.0, 3.0)
+    _rounded(path, 28.0, 76.0, 44.0, 12.0, 5.0)
+
+
+def _screen(path: QPainterPath) -> None:
+    """Écran — ce qu'on regarde ensemble. Un cadre, un pied, un triangle."""
+    cadre = QPainterPath()
+    cadre.addRoundedRect(QRectF(10.0, 16.0, 80.0, 56.0), 9.0, 9.0)
+    creux = QPainterPath()
+    creux.addRoundedRect(QRectF(20.0, 26.0, 60.0, 36.0), 4.0, 4.0)
+    cadre.addPath(creux.toReversed())
+    path.addPath(cadre)
+    lecture = QPainterPath()
+    lecture.moveTo(43.0, 33.0)
+    lecture.lineTo(65.0, 44.0)
+    lecture.lineTo(43.0, 55.0)
+    lecture.closeSubpath()
+    path.addPath(lecture)
+    _rounded(path, 34.0, 78.0, 32.0, 10.0, 5.0)
+    _rounded(path, 45.0, 70.0, 10.0, 10.0, 2.0)
+
+
 def _face(path: QPainterPath, courbure: float) -> None:
     """Visage d'humeur. `courbure` positive sourit, négative boude.
 
@@ -436,6 +521,11 @@ BUILDERS = {
     "shop_hat": _cat_hat,
     "shop_moustache": _cat_moustache,
     "settings": _gear,
+    "trophies": _trophy,
+    "trophy": _trophy,
+    "clock": _clock,
+    "cake": _cake,
+    "screen": _screen,
     "autostart": _autostart,
     "reset": _reset,
     "feed": _bowl,

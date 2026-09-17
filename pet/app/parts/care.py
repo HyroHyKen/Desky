@@ -54,6 +54,7 @@ class CareMixin:
             self.panel.game_requested.connect(self._on_game)
             self.panel.purchase_requested.connect(self._on_purchase)
             self.panel.consumable_used.connect(self._on_consumable)
+            self.panel.reward_claimed.connect(self._on_claim)
             self.panel.item_preview = self.cosmetic_preview
         return self.panel
 
@@ -185,6 +186,24 @@ class CareMixin:
             self.panel.update()
         if self.diag:
             print(f"[diag] soin {kind} -> {applied}", flush=True)
+
+    def _on_claim(self, cle: str) -> None:
+        """Encaisse la récompense d'un trophée (lot L22).
+
+        Le versement est **hors plafond quotidien** — c'est la session qui le
+        garantit. Ici on ne fait que le déclencher, le fêter, et repeindre le
+        solde : la page est lue à chaque image, donc elle se met à jour seule.
+        """
+        gain = self.session.claim(cle)
+        if not gain:
+            return
+        if self.animator is not None:
+            self.animator.play("celebrate")
+        bus.emit("recompense_encaissee", cle=cle, jetons=gain)
+        self.clock.poke()
+        if self.panel is not None:
+            self.panel.update()
+        log.info("trophee encaisse : %s (+%d jetons)", cle, gain)
 
     def _on_appearance(self, param: str, value: str) -> None:
         """Applique un choix de couleur, et le montre tout de suite.

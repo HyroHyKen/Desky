@@ -58,6 +58,9 @@ EVENTS: frozenset[str] = frozenset({
     "soin_accepte",             # {soin}
     "article_achete",           # {emplacement, cle}
     "achat_refuse",             # {emplacement, cle, raison}
+    # Trophées (lot L22)
+    "succes_debloque",          # {cle} — la récompense, elle, s'encaisse à part
+    "recompense_encaissee",     # {cle, jetons}
     # Identité et réglages
     "nom_donne",                # {nom}
     "apparence_changee",        # {param, cle}

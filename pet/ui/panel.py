@@ -76,6 +76,34 @@ TILE_LABEL = 15
 TILE_GAP = 8
 SHOP_COLUMNS = 4
 
+# -- page des trophées (lot L22) ---------------------------------------------
+#
+# La première **liste** du panneau, après huit pages de grilles. Une ligne y
+# porte quatre choses — icône, titre, description, avancement — là où un bouton
+# n'en portait qu'une, et c'est ce qui impose une hauteur de rangée plutôt qu'un
+# carré.
+ROW_H = 62
+ROW_GAP = 6
+ROW_RADIUS = 12
+
+# Quatre rangées visibles. Le panneau se pose au-dessus de la tête du robot :
+# au-delà, il déborde du haut de l'écran quand le pet est sur un moniteur court,
+# et une liste qu'on ne voit qu'à moitié ne se défile pas mieux qu'une liste de
+# quatre.
+ROWS_VISIBLE = 4
+
+ROW_ICON = 30
+ROW_BAR_H = 6
+ROW_CLAIM = 34                     # bouton d'encaissement, à droite de la ligne
+ROW_TITLE_SIZE = 13
+ROW_DESC_SIZE = 10
+SCROLL_W = 3.0                     # largeur du filet de défilement
+
+# Déplacement du doigt à partir duquel on défile plutôt qu'on clique. En
+# dessous, un clic un peu tremblant sur un bouton d'encaissement partirait en
+# défilement et la récompense ne serait jamais versée.
+SCROLL_GRAB = 4.0
+
 # Appui long de la réinitialisation. Deux secondes, parce que le geste est
 # irréversible et que l'interface n'a **pas de texte** pour demander
 # confirmation : la durée tient lieu de « êtes-vous sûr ».
@@ -203,6 +231,23 @@ BAR_BG = QColor(224, 229, 232)
 ACCENT = QColor(31, 168, 186)
 BAR_FILL = ACCENT
 
+# Lignes de trophée (lot L22). Le fond acquis est le cyan du produit **posé sur
+# le fond du panneau**, et non une couleur inventée : une ligne obtenue doit se
+# reconnaître au premier coup d'œil sans que la page change de palette.
+ROW_BG = QColor(238, 241, 243)
+ROW_BG_DONE = QColor(226, 243, 246)
+# Cyan encré, pour le texte seulement. L'accent plein tombe sous le contraste
+# lisible à treize pixels sur fond clair.
+ROW_INK_DONE = QColor(17, 110, 123)
+# Gris des lignes à faire. Plus soutenu que `INK_OFF`, qui sert à griser un
+# bouton indisponible : ici la ligne n'est pas désactivée, elle est en cours, et
+# sa description doit rester lisible.
+ROW_INK_TODO = QColor(142, 152, 161)
+ROW_FILL_TODO = QColor(158, 168, 176)
+# Survol du bouton d'encaissement : il s'éclaircit, donc il avance. Les autres
+# boutons du panneau s'assombrissent, parce qu'ils partent d'un gris clair.
+CLAIM_HOVER = QColor(64, 196, 212)
+
 BAR_LOW = QColor(196, 112, 58)
 SWATCH_EDGE = QColor(24, 32, 40, 90)
 
@@ -223,7 +268,7 @@ SHOP_PAGES: tuple[str, ...] = (tuple("shop_" + s for s in SLOTS)
 # caresse, et une page pour un seul bouton est une page de trop — elle est
 # remontée au menu racine.
 PAGES = ("menu", "status", "games", "inventory", "custom", "shop") + SHOP_PAGES + (
-    "settings", "name")
+    "trophies", "settings", "name")
 
 # ---------------------------------------------------------------------------
 # Libellés
@@ -261,6 +306,7 @@ PAGE_TITLES: dict[str, str] = {
     "inventory": "Inventaire",
     "custom": "Apparence",
     "shop": "Boutique",
+    "trophies": "Trophées",
     "settings": "Réglages",
     "name": "Quel est mon nom ?",
 }
@@ -279,6 +325,7 @@ TOOLTIPS: dict[str, str] = {
     "custom": "Changer son apparence",
     "games": "Jouer avec lui",
     "shop": "Boutique",
+    "trophies": "Ses trophées",
     "settings": "Réglages",
     "quit": "Quitter",
     # Jeux
@@ -295,6 +342,11 @@ TOOLTIPS: dict[str, str] = {
     "autostart": "Lancer au démarrage de Windows",
     "reset": "Tout réinitialiser : maintenir appuyé",
 }
+
+# Encaissement d'une récompense de trophée. Le nombre est dans le bouton ;
+# l'infobulle dit ce que le geste fait, ce qu'un « +5 » seul ne dit pas.
+TOOLTIP_CLAIM = "Encaisser %d jetons"
+TOOLTIP_CLAIM_ONE = "Encaisser 1 jeton"
 
 # Infobulles des choix d'apparence, construites à la volée : une par couleur et
 # une par chapeau serait une table à tenir à jour à chaque ajout.
@@ -358,7 +410,8 @@ TITLE_RULE_GAP = 3.0               # entre la ligne de base et le filet
 # en-tête — pastille d'humeur et nom — en tient lieu et doit rester soudé aux
 # jauges qu'il commente.
 TITLE_LEAD = 15
-TITLE_TIGHT_PAGES: frozenset[str] = frozenset({"status", "shop"}) | frozenset(SHOP_PAGES)
+TITLE_TIGHT_PAGES: frozenset[str] = (frozenset({"status", "shop", "trophies"})
+                                     | frozenset(SHOP_PAGES))
 
 # Boutons du menu racine. La personnalisation se glisse **avant** la boutique :
 # les deux touchent à l'apparence, et celle qui est gratuite doit se trouver la
@@ -371,7 +424,7 @@ TITLE_TIGHT_PAGES: frozenset[str] = frozenset({"status", "shop"}) | frozenset(SH
 # geste qu'on fait en passant, le seul qui ne coûte rien, et l'enterrer sous une
 # navigation le rendrait plus cher que ce qu'il vaut.
 MENU_ACTIONS = ("status", "pet", "games", "inventory", "custom", "shop",
-                "settings", "quit")
+                "trophies", "settings", "quit")
 
 # Actions qui exigent un appui maintenu. La seule pour l'instant, et la seule
 # qui détruise quoi que ce soit.
@@ -413,6 +466,31 @@ class Button:
     # veut dire « rien à payer » — article possédé, ou tête nue.
     preview: object = None
     price: int = -1
+    # Le bouton appartient à une liste qui défile : il est peint et cliquable
+    # **à travers** la fenêtre de la page, jamais au-delà. Sans cette marque, un
+    # bouton d'encaissement sorti par le haut resterait visible sur le titre et
+    # continuerait de répondre au clic.
+    clipped: bool = False
+
+
+@dataclass
+class Row:
+    """Une ligne de la liste des trophées.
+
+    Peinte et testée depuis la même donnée que les boutons, et calculée dans
+    `_layout` comme eux : c'est ce qui permet au défilement de n'exister qu'à un
+    seul endroit. Un décalage appliqué à la peinture seule laisserait les clics
+    là où les lignes étaient avant.
+    """
+
+    rect: QRectF
+    icon: str
+    title: str
+    description: str
+    progress: float
+    unlocked: bool
+    claimed: bool
+    reward: int
 
 
 @dataclass
@@ -421,6 +499,11 @@ class Layout:
 
     height: int
     buttons: list[Button] = field(default_factory=list)
+    # Liste défilante, et la fenêtre à travers laquelle on la voit. Les deux
+    # vont ensemble : sans le cadre, les lignes du haut et du bas déborderaient
+    # sur le titre et sur le bouton de retour.
+    rows: list[Row] = field(default_factory=list)
+    clip: QRectF | None = None
     bars: list[tuple[str, float]] = field(default_factory=list)
     mood: str = ""
     name: str = ""
@@ -452,6 +535,7 @@ class CarePanel(QWidget):
     game_requested = Signal(str)
     purchase_requested = Signal(str)
     consumable_used = Signal(str)
+    reward_claimed = Signal(str)
 
     def __init__(self, session, genome: dict | None = None,
                  parent: QWidget | None = None) -> None:
@@ -485,6 +569,15 @@ class CarePanel(QWidget):
         # pas si on a bien joué, un record seul ne dit pas ce qu'on vient de
         # faire.
         self.last_score: dict[str, int] = {}
+
+        # -- liste des trophées (lot L22) -----------------------------------
+        #
+        # Le décalage de défilement, et la prise en cours. La prise porte
+        # l'ordonnée du doigt et le décalage qu'il y avait à cet instant :
+        # défiler est alors une soustraction, sans accumulation d'erreur.
+        self._defilement = 0.0
+        self._prise: tuple[float, float] | None = None
+        self._glisse = False
 
         # -- animation (lot L9) ---------------------------------------------
         #
@@ -638,6 +731,12 @@ class CarePanel(QWidget):
         cles += ["barre:%s" % nom for nom, _ in layout.bars]
         if layout.big_icon:
             cles.append("grande_icone")
+        # Seules les rangées **visibles** entrent en cascade. Les trente-cinq
+        # autres arriveraient sous le cadre, où personne ne les verrait, et leur
+        # place dans la vague resserrerait le pas des quatre qui comptent.
+        if layout.clip is not None:
+            cles += ["ligne:%d" % i for i, ligne in enumerate(layout.rows)
+                     if ligne.rect.intersects(layout.clip)]
         cles += ["bouton:%s" % b.action for b in layout.buttons]
         return cles
 
@@ -690,6 +789,12 @@ class CarePanel(QWidget):
             return
         change = page != self.page
         self.page = page
+        if change:
+            # Une liste se rouvre en haut. Reprendre un décalage hérité d'une
+            # autre visite ferait apparaître la page au milieu de nulle part.
+            self._defilement = 0.0
+            self._prise = None
+            self._glisse = False
         layout = self._layout()
         self.setFixedHeight(layout.height)
         self._hover = -1
@@ -854,6 +959,75 @@ class CarePanel(QWidget):
         layout.height = int(bas + BUTTON + PAD)
         return layout
 
+    def _trophies_layout(self) -> Layout:
+        """La liste des trophées, défilée d'un seul décalage.
+
+        **Le défilement vit dans la géométrie**, pas dans la peinture : les
+        rangées et leurs boutons sont posés à leur ordonnée décalée, et le
+        `clip` dit jusqu'où on les voit. C'est ce qui garantit qu'un bouton
+        d'encaissement à moitié sorti ne réponde pas au clic sur sa moitié
+        invisible — décaler la peinture seule laisserait les zones cliquables
+        immobiles.
+
+        **Ce qui attend passe devant.** Une liste de trente-neuf lignes dans une
+        fenêtre de quatre cacherait la récompense au milieu ; les trophées à
+        encaisser remontent donc en tête, et le reste garde l'ordre du
+        catalogue. L'ordre ne bouge qu'après un encaissement, c'est-à-dire
+        après un geste de l'utilisateur, jamais sous son doigt.
+        """
+        from ..brain import achievements
+
+        haut = self._top() + HEADER + BAR_GAP
+        vue = QRectF(PAD, haut, WIDTH - 2 * PAD,
+                     ROWS_VISIBLE * ROW_H + (ROWS_VISIBLE - 1) * ROW_GAP)
+        layout = Layout(height=int(vue.bottom() + GAP + BUTTON + PAD),
+                        tokens=self.session.tokens,
+                        title=PAGE_TITLES.get("trophies", ""))
+        layout.clip = vue
+
+        obtenus = self.session.achievements
+        encaisses = set(self.session.claimed)
+        mesures = self.session.mesures()
+        a_encaisser = [c for c in achievements.ORDRE
+                       if c in obtenus and c not in encaisses]
+        ordre = a_encaisser + [c for c in achievements.ORDRE
+                               if c not in a_encaisser]
+
+        self._defilement = max(0.0, min(self._defilement,
+                                        self._course(len(ordre), vue)))
+
+        for index, cle in enumerate(ordre):
+            trophee = achievements.BY_KEY[cle]
+            y = vue.top() + index * (ROW_H + ROW_GAP) - self._defilement
+            rect = QRectF(vue.left(), y, vue.width(), ROW_H)
+            gagne = cle in obtenus
+            layout.rows.append(Row(
+                rect=rect,
+                icon=trophee.icone,
+                title=trophee.titre,
+                description=trophee.description,
+                progress=achievements.progres(trophee, mesures),
+                unlocked=gagne,
+                claimed=cle in encaisses,
+                reward=trophee.recompense,
+            ))
+            if gagne and cle not in encaisses:
+                cote = QRectF(rect.right() - ROW_CLAIM - 8.0,
+                              rect.center().y() - ROW_CLAIM / 2.0,
+                              ROW_CLAIM, ROW_CLAIM)
+                layout.buttons.append(Button(cote, "token", "claim:" + cle,
+                                             price=trophee.recompense,
+                                             clipped=True))
+
+        layout.buttons += self._row(("back",), int(vue.bottom() + GAP))
+        return layout
+
+    @staticmethod
+    def _course(lignes: int, vue: QRectF) -> float:
+        """Amplitude de défilement : ce qui dépasse de la fenêtre, ou zéro."""
+        total = lignes * ROW_H + max(0, lignes - 1) * ROW_GAP
+        return max(0.0, total - vue.height())
+
     def _preview(self, slot: str, key: str):
         """Aperçu d'un article, fourni par la fenêtre. None si indisponible.
 
@@ -984,6 +1158,9 @@ class CarePanel(QWidget):
             layout.buttons += self._row(("back",), haut + pastilles)
             return layout
 
+        if self.page == "trophies":
+            return self._trophies_layout()
+
         if self.page == "shop":
             return self._shop_root_layout()
 
@@ -1113,8 +1290,31 @@ class CarePanel(QWidget):
         for jeu, record, dernier in layout.scores:
             self._paint_score(painter, layout, jeu, record, dernier)
 
+        if layout.clip is not None:
+            painter.save()
+            painter.setClipRect(layout.clip)
+            for index, ligne in enumerate(layout.rows):
+                if not ligne.rect.intersects(layout.clip):
+                    continue
+                cle = "ligne:%d" % index
+                fini = self._entree_debut(painter, cle, ligne.rect.center())
+                self._paint_row(painter, ligne, self._entree.value(cle))
+                self._entree_fin(painter, fini)
+            painter.restore()
+            self._paint_scroll(painter, layout)
+
         for index, button in enumerate(layout.buttons):
             centre = button.rect.center()
+            # Un bouton de liste n'existe qu'à travers le cadre. Peint sans
+            # découpe, il resterait posé sur le titre une fois la ligne sortie
+            # par le haut.
+            decoupe = button.clipped and layout.clip is not None
+            if decoupe:
+                painter.save()
+                painter.setClipRect(layout.clip)
+                if not button.rect.intersects(layout.clip):
+                    painter.restore()
+                    continue
             entree = self._entree_debut(painter, "bouton:%s" % button.action,
                                         centre)
             # Échelle autour du **centre du bouton** : depuis l'origine du
@@ -1138,6 +1338,8 @@ class CarePanel(QWidget):
             if transforme:
                 painter.restore()
             self._entree_fin(painter, entree)
+            if decoupe:
+                painter.restore()
 
         # Les pastilles de quantité **après** les boutons : peintes avant, les
         # boutons les recouvraient purement et simplement. Elles débordent du
@@ -1193,6 +1395,121 @@ class CarePanel(QWidget):
                     QRectF(gauche, PAD, largeur, HEADER),
                     int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                     layout.name)
+
+    def _paint_row(self, painter: QPainter, ligne: Row,
+                   entree: float = 1.0) -> None:
+        """Une ligne de trophée : icône, titre, description, avancement.
+
+        Deux états et deux seulement, comme demandé — gris tant que c'est à
+        faire, cyan du produit dès que c'est acquis. Le texte du titre ne prend
+        pas le cyan plein mais sa version encrée : à treize pixels sur fond
+        clair, le cyan de l'accent tombe sous le contraste lisible, et un
+        trophée obtenu qu'on déchiffre à peine est une récompense ratée.
+        """
+        acquis = ligne.unlocked
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ROW_BG_DONE if acquis else ROW_BG)
+        painter.drawRoundedRect(ligne.rect, ROW_RADIUS, ROW_RADIUS)
+
+        gauche = ligne.rect.left() + 11.0
+        icone = QRectF(gauche, ligne.rect.top() + (ROW_H - ROW_ICON) / 2.0,
+                       ROW_ICON, ROW_ICON)
+        draw_icon(painter, ligne.icon, icone, ACCENT if acquis else INK_OFF)
+
+        texte = gauche + ROW_ICON + 11.0
+        # Le pavé de texte s'arrête avant ce qui occupe la droite de la ligne :
+        # le bouton d'encaissement, ou la coche qui dit qu'elle a été prise.
+        droite = ligne.rect.right() - (ROW_CLAIM + 16.0
+                                       if acquis else 12.0)
+        largeur = max(40.0, droite - texte)
+
+        font = QFont()
+        font.setPixelSize(ROW_TITLE_SIZE)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(ROW_INK_DONE if acquis else INK_SOFT)
+        metrique = painter.fontMetrics()
+        painter.drawText(
+            QRectF(texte, ligne.rect.top() + 8.0, largeur, 16.0),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            metrique.elidedText(ligne.title, Qt.TextElideMode.ElideRight,
+                                int(largeur)))
+
+        font.setPixelSize(ROW_DESC_SIZE)
+        font.setWeight(QFont.Weight.Normal)
+        painter.setFont(font)
+        painter.setPen(INK_SOFT if acquis else ROW_INK_TODO)
+        metrique = painter.fontMetrics()
+        painter.drawText(
+            QRectF(texte, ligne.rect.top() + 24.0, largeur, 15.0),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            metrique.elidedText(ligne.description, Qt.TextElideMode.ElideRight,
+                                int(largeur)))
+
+        # Avancement. La barre garde sa piste même pleine : sans elle, une ligne
+        # acquise n'aurait plus de repère de longueur et les barres des autres
+        # sembleraient flotter.
+        piste = QRectF(texte, ligne.rect.bottom() - 16.0, largeur, ROW_BAR_H)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(BAR_BG)
+        painter.drawRoundedRect(piste, ROW_BAR_H / 2.0, ROW_BAR_H / 2.0)
+        remplie = max(0.0, min(1.0, ligne.progress)) * max(0.0, min(1.0, entree))
+        if remplie > 0.0:
+            plein = QRectF(piste)
+            plein.setWidth(max(ROW_BAR_H, piste.width() * remplie))
+            painter.setBrush(ACCENT if acquis else ROW_FILL_TODO)
+            painter.drawRoundedRect(plein, ROW_BAR_H / 2.0, ROW_BAR_H / 2.0)
+
+        if acquis and ligne.claimed:
+            # Récompense déjà prise : une coche, pas un bouton. La place reste
+            # occupée pour que les lignes ne se décalent pas en changeant d'état.
+            coche = QRectF(ligne.rect.right() - ROW_CLAIM - 8.0,
+                           ligne.rect.center().y() - 9.0, 18.0, 18.0)
+            draw_icon(painter, "check", coche, ACCENT)
+
+    def _paint_claim(self, painter: QPainter, button: Button) -> None:
+        """Bouton d'encaissement : un pavé cyan et le nombre de jetons.
+
+        Plein plutôt que creux, et le seul de la page à l'être : c'est la seule
+        chose à faire ici, et une liste où tout se ressemble n'aurait rien à
+        proposer. Le survol l'éclaircit au lieu de l'assombrir — il monte vers
+        le blanc, donc vers l'avant.
+        """
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(_melange(ACCENT, CLAIM_HOVER,
+                                  self._survol.value(button.action)))
+        painter.drawRoundedRect(button.rect, RADIUS - 2, RADIUS - 2)
+        font = QFont()
+        font.setPixelSize(14 if button.price < 100 else 12)
+        font.setWeight(QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(button.rect, int(Qt.AlignmentFlag.AlignCenter),
+                         str(max(0, button.price)))
+
+    def _paint_scroll(self, painter: QPainter, layout: Layout) -> None:
+        """Filet de défilement, à droite du cadre. Absent s'il n'y a rien à
+        défiler : une barre pleine hauteur dirait qu'on a tout vu alors qu'il
+        n'y avait rien d'autre à voir."""
+        vue = layout.clip
+        if vue is None:
+            return
+        course = self._course(len(layout.rows), vue)
+        if course <= 0.0:
+            return
+        total = vue.height() + course
+        hauteur = max(24.0, vue.height() * vue.height() / total)
+        part = self._defilement / course
+        x = vue.right() - SCROLL_W
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(BAR_BG)
+        painter.drawRoundedRect(QRectF(x, vue.top(), SCROLL_W, vue.height()),
+                                SCROLL_W / 2.0, SCROLL_W / 2.0)
+        painter.setBrush(INK_OFF)
+        painter.drawRoundedRect(
+            QRectF(x, vue.top() + part * (vue.height() - hauteur),
+                   SCROLL_W, hauteur),
+            SCROLL_W / 2.0, SCROLL_W / 2.0)
 
     def _paint_bar(self, painter: QPainter, need: str, value: float,
                    y: int, entree: float = 1.0) -> None:
@@ -1451,6 +1768,9 @@ class CarePanel(QWidget):
         if button.swatch:
             self._paint_swatch(painter, button, hover)
             return
+        if button.action.startswith("claim:"):
+            self._paint_claim(painter, button)
+            return
         if button.action.startswith(("cos:", "buy:")):
             # Les deux sont des **vignettes de rayon** : un dessin, un prix
             # dessous. Le prix est la moitié de l'information d'une boutique, et
@@ -1484,10 +1804,47 @@ class CarePanel(QWidget):
     # -- interaction -------------------------------------------------------
 
     def _at(self, pos) -> int:
-        for index, button in enumerate(self._layout().buttons):
+        layout = self._layout()
+        for index, button in enumerate(layout.buttons):
+            # Un bouton de liste ne répond que dans le cadre. Le test porte sur
+            # le **point cliqué** et non sur le bouton : à moitié sorti, il ne
+            # doit répondre que sur la moitié qu'on voit.
+            if (button.clipped and layout.clip is not None
+                    and not layout.clip.contains(pos.x(), pos.y())):
+                continue
             if button.rect.contains(pos.x(), pos.y()):
                 return index
         return -1
+
+    # -- défilement de la liste (lot L22) ----------------------------------
+
+    def _scroll_to(self, valeur: float) -> None:
+        """Pose le décalage, borné. Repeint si quelque chose a bougé."""
+        layout = self._layout()
+        if layout.clip is None:
+            return
+        borne = self._course(len(layout.rows), layout.clip)
+        valeur = max(0.0, min(float(valeur), borne))
+        if abs(valeur - self._defilement) < 1e-3:
+            return
+        self._defilement = valeur
+        # La mise en page a changé sous le curseur : le survol aussi.
+        self._hover = self._at(self.mapFromGlobal(self.cursor().pos()))
+        self._sync_targets(self._layout().buttons)
+        self.update()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 (API Qt)
+        """Molette. Elle n'arrive ici que si Windows la route vers la fenêtre
+        survolée — c'est le réglage par défaut depuis Windows 10, mais il se
+        désactive. Le glisser du lot ci-dessous est ce qui rend la liste
+        utilisable quand ce n'est pas le cas : sans lui, un panneau qui ne prend
+        jamais le focus serait un panneau qu'on ne peut pas défiler."""
+        if self._layout().clip is None:
+            super().wheelEvent(event)
+            return
+        pas = event.angleDelta().y() / 120.0
+        self._scroll_to(self._defilement - pas * (ROW_H + ROW_GAP))
+        event.accept()
 
     def _tooltip(self, button: Button) -> str:
         """Texte d'infobulle d'un bouton. Vide si le bouton se suffit.
@@ -1517,6 +1874,9 @@ class CarePanel(QWidget):
         if action.startswith("buy:"):
             cle = action[len("buy:"):]
             return TOOLTIP_BUY % (CONSUMABLE_LABELS.get(cle, cle), button.price)
+        if action.startswith("claim:"):
+            return (TOOLTIP_CLAIM_ONE if button.price == 1
+                    else TOOLTIP_CLAIM % button.price)
         if action.startswith("use:"):
             cle = action[len("use:"):]
             return TOOLTIP_USE % (CONSUMABLE_LABELS.get(cle, cle),
@@ -1526,6 +1886,15 @@ class CarePanel(QWidget):
         return TOOLTIPS.get(action, "")
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (API Qt)
+        if self._prise is not None:
+            depart, decalage = self._prise
+            ecart = depart - event.position().y()
+            if abs(ecart) >= SCROLL_GRAB:
+                self._glisse = True
+            if self._glisse:
+                self._scroll_to(decalage + ecart)
+                return
+
         index = self._at(event.position())
         if index == self._hover:
             return
@@ -1559,9 +1928,18 @@ class CarePanel(QWidget):
             self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (API Qt)
-        boutons = self._layout().buttons
+        layout = self._layout()
+        boutons = layout.buttons
         index = self._at(event.position())
         if index < 0:
+            # Dans le cadre d'une liste, un appui qui ne vise aucun bouton est
+            # une prise : on saisit la liste et on la fait glisser. C'est le
+            # geste de repli quand la molette ne parvient pas jusqu'ici.
+            if (layout.clip is not None
+                    and layout.clip.contains(event.position().x(),
+                                             event.position().y())):
+                self._prise = (event.position().y(), self._defilement)
+                self._glisse = False
             return
         button = boutons[index]
         if not button.enabled:
@@ -1602,6 +1980,8 @@ class CarePanel(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (API Qt)
+        self._prise = None
+        self._glisse = False
         self._cancel_hold()
         if self._appui_action:
             # Le relâchement rend la main au ressort, qui est sous-amorti :
@@ -1654,6 +2034,13 @@ class CarePanel(QWidget):
             return
         if action.startswith("use:"):
             self.consumable_used.emit(action[len("use:"):])
+            return
+        if action.startswith("claim:"):
+            # La page se repeint **après** le versement, pas avant : c'est la
+            # fenêtre qui débite la session, et peindre d'abord montrerait un
+            # solde d'avance qu'un refus démentirait.
+            self.reward_claimed.emit(action[len("claim:"):])
+            self.update()
             return
         if action in CARE_ACTIONS:
             self.care_requested.emit(action)

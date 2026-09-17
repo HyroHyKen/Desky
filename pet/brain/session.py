@@ -16,7 +16,7 @@ import logging
 import time
 
 from ..state import save
-from . import consumables
+from . import achievements, consumables
 from .brain import Brain
 from .economy import Economy
 from .needs import Needs, offline_elapsed
@@ -53,6 +53,17 @@ class Session:
         self.brain = Brain(Needs.from_dict(data.get("needs", {})))
         self.economy = Economy.from_dict(data)
 
+        # Date de naissance (lot L22). Absente des sauvegardes d'avant les
+        # trophées : on la rattrape une fois, sur le plus vieux repère
+        # disponible, plutôt que de faire naître aujourd'hui un robot qu'on a
+        # depuis trois mois.
+        if self.born_at <= 0.0:
+            naissance = save.estimate_birth(self.clock())
+            self.store.set(born_at=round(naissance, 3))
+            log.info("date de naissance estimee : %.0f", naissance)
+        self._rattraper_les_compteurs()
+        self.mark_day()
+
         cooldowns = data.get("cooldowns") or {}
         elapsed = offline_elapsed(self.clock(), float(data.get("last_seen", 0.0)))
         self.offline_seconds = elapsed
@@ -75,6 +86,175 @@ class Session:
             if left > 0.0:
                 self.brain._cooldowns[kind] = left
 
+    # --- trophées (lot L22) -----------------------------------------------
+
+    @property
+    def born_at(self) -> float:
+        return float(self.store.data.get("born_at", 0.0) or 0.0)
+
+    @property
+    def stats(self) -> dict[str, float]:
+        brut = self.store.data.get("stats") or {}
+        return {str(k): float(v) for k, v in brut.items()
+                if isinstance(v, (int, float))}
+
+    def bump(self, mesure: str, combien: float = 1.0) -> float:
+        """Ajoute au compteur. Retourne sa nouvelle valeur.
+
+        N'enregistre pas : les compteurs suivent les gestes de l'utilisateur, et
+        écrire sur disque à chaque poussée du doigt serait une écriture toutes
+        les deux secondes. L'enregistrement périodique du §14 les emporte, et
+        `unlock` force la main dès qu'un trophée tombe — c'est-à-dire au seul
+        moment où perdre le compteur se verrait.
+        """
+        compteurs = dict(self.stats)
+        valeur = max(0.0, compteurs.get(mesure, 0.0) + float(combien))
+        compteurs[mesure] = valeur
+        self.store.set(stats=compteurs)
+        return valeur
+
+    def _rattraper_les_compteurs(self) -> None:
+        """Ce que la sauvegarde **prouve** déjà, pour les robots d'avant (L22).
+
+        Les trophées arrivent après des semaines d'usage : sans ce rattrapage,
+        un utilisateur qui a baptisé son robot, joué, gagné et acheté verrait
+        une page entièrement grise, y compris sur des choses qu'il a
+        manifestement faites. Le §12 interdit de punir ; effacer un passé qu'on
+        peut lire dans le fichier en serait une forme discrète.
+
+        **Chaque ligne est une déduction, pas une estimation.** Un nom ne
+        s'obtient qu'en baptisant, un record ne s'inscrit qu'en jouant, un
+        accessoire ne s'ajoute à l'inventaire qu'en l'achetant. Ce qui ne se
+        démontre pas — combien de repas, combien de bains — reste à zéro, et
+        c'est la bonne réponse : mieux vaut un compteur en retard qu'un compteur
+        inventé.
+
+        Ne s'exécute que tant qu'aucun compteur n'existe, donc une seule fois
+        dans la vie d'une sauvegarde.
+        """
+        if self.stats:
+            return
+        if self.name:
+            self.record_stat(achievements.BAPTEME, 1.0)
+        scores = self.store.data.get("best_scores") or {}
+        if scores:
+            # Un record inscrit veut dire au moins une partie finie, et au
+            # moins un record battu.
+            self.record_stat(achievements.PARTIES, float(len(scores)))
+            self.record_stat(achievements.RECORDS, float(len(scores)))
+        possedes = len(self.inventory)
+        if possedes:
+            self.record_stat(achievements.ACHATS, float(possedes))
+        # Le solde est un **plancher** de ce qui a été gagné : ce qui a déjà été
+        # dépensé n'est écrit nulle part.
+        if self.economy.tokens > 0:
+            self.record_stat(achievements.JETONS, float(self.economy.tokens))
+
+    def set_stat(self, mesure: str, valeur: float) -> float:
+        """Pose la valeur d'un compteur. Pour ce qui se remet à zéro."""
+        compteurs = dict(self.stats)
+        compteurs[mesure] = max(0.0, float(valeur))
+        self.store.set(stats=compteurs)
+        return compteurs[mesure]
+
+    def record_stat(self, mesure: str, valeur: float) -> float:
+        """Garde le **maximum** atteint. Pour ce qui se bat, pas ce qui s'ajoute."""
+        compteurs = dict(self.stats)
+        valeur = max(compteurs.get(mesure, 0.0), float(valeur))
+        compteurs[mesure] = valeur
+        self.store.set(stats=compteurs)
+        return valeur
+
+    def mark_day(self, when: float | None = None) -> bool:
+        """Compte une journée de présence. Rend `True` si elle est nouvelle.
+
+        Le repère est la date **locale** et non un multiple de 86 400 secondes :
+        une journée commence à minuit chez l'utilisateur, pas à minuit UTC.
+        """
+        from datetime import date
+
+        quand = self.clock() if when is None else float(when)
+        try:
+            jour = float(date.fromtimestamp(quand).toordinal())
+        except (OverflowError, OSError, ValueError):
+            return False
+        if self.stats.get("jour_dernier", 0.0) == jour:
+            return False
+        self.record_stat("jour_dernier", jour)
+        self.bump(achievements.JOURS_VUS, 1)
+        return True
+
+    @property
+    def achievements(self) -> dict[str, float]:
+        """Trophées obtenus, `clé -> date`."""
+        brut = self.store.data.get("achievements") or {}
+        return {str(k): float(v) for k, v in brut.items()
+                if k in achievements.BY_KEY}
+
+    @property
+    def claimed(self) -> list[str]:
+        return list(self.store.data.get("claimed") or [])
+
+    def mesures(self, when: float | None = None) -> dict[str, float]:
+        """Les compteurs, plus les mesures qu'on lit ailleurs.
+
+        L'âge, les records et le nombre d'accessoires ne sont pas accumulés :
+        ils existent déjà sous une autre forme, et en tenir une copie donnerait
+        deux vérités dont l'une finirait périmée.
+        """
+        quand = self.clock() if when is None else float(when)
+        out = dict(self.stats)
+        naissance = self.born_at
+        out[achievements.AGE] = (max(0.0, quand - naissance) / 86400.0
+                                 if naissance > 0.0 else 0.0)
+        out[achievements.RALLY] = float(self.best_score("rally"))
+        out[achievements.CUPS] = float(self.best_score("cups"))
+        out[achievements.ACCESSOIRES] = float(len(self.inventory))
+        return out
+
+    def check_achievements(self, when: float | None = None) -> list[str]:
+        """Débloque ce qui doit l'être. Retourne les clés **nouvelles**.
+
+        Ne verse rien : la récompense s'encaisse depuis la page des trophées,
+        d'un geste de l'utilisateur. Débloquer et réclamer sont séparés parce
+        que des jetons qui tombent tout seuls pendant qu'on travaille ne se
+        remarquent pas, et un trophée qu'on n'a pas vu passer n'en est pas un.
+        """
+        quand = self.clock() if when is None else float(when)
+        deja = self.achievements
+        neufs = [cle for cle in achievements.obtenus(self.mesures(quand))
+                 if cle not in deja]
+        if not neufs:
+            return []
+        deja.update({cle: round(quand, 3) for cle in neufs})
+        self.store.set(achievements=deja)
+        # Forcé : un trophée obtenu qu'un plantage effacerait serait la seule
+        # perte vraiment irréparable de ce fichier, puisqu'un premier bain ne se
+        # refait pas.
+        self.flush(force=True)
+        return neufs
+
+    def claimable(self) -> list[str]:
+        """Trophées obtenus dont la récompense attend, dans l'ordre du catalogue."""
+        encaisses = set(self.claimed)
+        obtenus = self.achievements
+        return [cle for cle in achievements.ORDRE
+                if cle in obtenus and cle not in encaisses]
+
+    def claim(self, cle: str) -> int:
+        """Encaisse la récompense d'un trophée. Retourne les jetons versés.
+
+        Hors plafond quotidien, et une seule fois : le second appel rend zéro
+        plutôt que de lever, parce qu'un double-clic sur un bouton n'est pas une
+        faute à signaler.
+        """
+        if cle not in self.achievements or cle in self.claimed:
+            return 0
+        gain = self.economy.grant(achievements.recompense(cle))
+        self.store.set(claimed=sorted(set(self.claimed) | {cle}))
+        self.flush(force=True)
+        return gain
+
     # --- économie ---------------------------------------------------------
 
     @property
@@ -96,8 +276,17 @@ class Session:
         Écrit tout de suite : un token gagné qu'un plantage annulerait serait
         plus irritant que pas de token du tout.
         """
+        avant = self.economy.remaining
         gagne = self.economy.award(amount)
         if gagne:
+            self.bump(achievements.JETONS, gagne)
+            # Le plafond vient d'être atteint. Le repérer à la **transition**
+            # plutôt qu'à l'état suffit à ne le compter qu'une fois par jour :
+            # `today` repart de zéro à chaque bascule de journée, donc le
+            # passage de « il reste quelque chose » à « il ne reste rien » n'a
+            # lieu qu'une fois.
+            if avant > 0 and self.economy.remaining == 0:
+                self.bump(achievements.JOURS_PLEINS, 1)
             self.flush(force=True)
         return gagne
 

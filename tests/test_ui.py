@@ -254,9 +254,16 @@ class _FauxSession:
         self.tokens_remaining = 25
         self.best_scores = {}
         self.consumables = {}
+        # Trophées (lot L22) : la page les lit comme elle lit le reste.
+        self.achievements = {}
+        self.claimed = []
+        self.stats = {}
 
     def best_score(self, jeu: str) -> int:
         return int(self.best_scores.get(jeu, 0))
+
+    def mesures(self, when=None) -> dict:
+        return dict(self.stats)
 
     def count(self, key: str) -> int:
         return int(self.consumables.get(key, 0))

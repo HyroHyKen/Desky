@@ -91,6 +91,12 @@ class BehaviourMixin:
         else:
             self._me.item_x = None
 
+        # Les trophées avancent ici, sur le même `dt` que le comportement : ce
+        # qu'ils mesurent — une journée, une séance devant une vidéo — ne
+        # s'annonce par aucun fait, et un minuteur de plus coûterait des réveils
+        # pour une lecture qui a déjà lieu (§3).
+        self.trophies.tick(dt, self.sensors.context, self.brain)
+
         plan = self.session.update(dt, self.sensors.context, self._me)
         if plan.action != self._last_action:
             self._last_action = plan.action

@@ -106,6 +106,23 @@ class Economy:
         self.today += gagne
         return gagne
 
+    def grant(self, amount: int) -> int:
+        """Verse **hors plafond**. Réservé aux récompenses de trophée (L22).
+
+        Le plafond existe pour que l'oisiveté ne soit pas la stratégie
+        optimale : il borne ce qu'une journée de présence peut rapporter. Un
+        trophée n'est pas de la présence, c'est une chose faite une fois dans la
+        vie du robot, et la faire passer sous le plafond aurait un effet absurde
+        — débloquer « 1 an » un jour où l'on a déjà joué perdrait 75 des 100
+        jetons promis, sans que rien ne l'explique à l'utilisateur.
+
+        Ne touche donc ni `day` ni `today` : ce versement n'entame pas le quota
+        du jour et ne le rouvre pas non plus.
+        """
+        gagne = max(0, int(amount))
+        self.tokens += gagne
+        return gagne
+
     # --- dépense ----------------------------------------------------------
 
     def can_afford(self, price: int) -> bool:
