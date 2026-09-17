@@ -24,7 +24,8 @@ from pet.anim.layers import (MAX_MONOBLOC_PITCH, MAX_MONOBLOC_YAW,
                              MONOBLOC_TRANSFER, apply_channels)
 from pet.anim.rig_pose import RigPose
 from pet.genome import generator, migration
-from pet.genome.schema import CHASSIS, PARAMS, PARAMS_BY_KEY, defaults
+from pet.genome.schema import (CHASSIS, PARAMS, PARAMS_BY_KEY,
+                               SCREEN_HEIGHTS, defaults)
 from pet.geometry import proportions
 from pet.geometry.builder import build
 
@@ -49,11 +50,12 @@ def _monde(robot, nom: str) -> np.ndarray:
 
 
 class SchemaTest(unittest.TestCase):
-    def test_le_chassis_est_le_dernier_parametre(self) -> None:
+    def test_les_parametres_du_lot_sont_en_fin_de_liste(self) -> None:
         """`generator.draw` consomme le PRNG dans l'ordre de `PARAMS` : un
         paramètre inséré ailleurs qu'à la fin décalerait tous les tirages
         suivants, et chaque graine donnerait un autre robot."""
-        self.assertEqual(PARAMS[-1].key, "chassis")
+        self.assertEqual([p.key for p in PARAMS[-2:]],
+                         ["chassis", "screen.height"])
 
     def test_le_repli_est_la_capsule(self) -> None:
         """C'est ce qui fait qu'une sauvegarde d'avant le lot garde son robot :
@@ -71,34 +73,40 @@ class SchemaTest(unittest.TestCase):
 
 
 class CoherenceTest(unittest.TestCase):
-    def test_un_monobloc_n_a_jamais_d_antenne(self) -> None:
-        """Une tige plantée dans un bloc sans tête distincte ne se lit pas
-        comme une oreille mais comme une erreur de montage."""
+    def test_un_monobloc_n_a_jamais_d_oreilles(self) -> None:
+        """Montées sur un bloc sans tête, elles se lisent comme des poignées."""
         vus = 0
         for seed in range(400):
             g = generator.generate(seed)
             if g["chassis"] == "monobloc":
                 vus += 1
-                self.assertNotEqual(g["ear.type"], "antenna", "graine %d" % seed)
+                self.assertEqual(g["ear.type"], "none", "graine %d" % seed)
         self.assertGreater(vus, 20, "trop peu de monoblocs tirés pour conclure")
 
-    def test_la_regle_rejette_bien(self) -> None:
+    def test_la_regle_signale_un_genome_edite(self) -> None:
+        """`normalize` règle le cas au tirage ; la règle de viabilité reste là
+        pour qu'un fichier édité à la main soit signalé plutôt qu'accepté."""
         mauvais = defaults()
         mauvais["chassis"] = "monobloc"
-        mauvais["ear.type"] = "antenna"
-        self.assertIn("monobloc_avec_antenne",
+        mauvais["ear.type"] = "disc"
+        self.assertIn("monobloc_avec_oreilles",
                       generator.viability_issues(mauvais))
+
+    def test_la_canonisation_coute_moins_que_le_rejet(self) -> None:
+        """Rejeter les monoblocs à oreilles aurait retiré quatre tirages sur
+        cinq de ce châssis ; les canoniser n'en retire aucun."""
+        rate, reasons = generator.acceptance_rate(2000)
+        self.assertNotIn("monobloc_avec_oreilles", reasons)
+        self.assertGreater(rate, 0.60)
 
     def test_les_deux_chassis_sortent_du_tirage(self) -> None:
         tires = {generator.generate(s)["chassis"] for s in range(200)}
         self.assertEqual(tires, set(CHASSIS))
 
     def test_le_taux_d_acceptation_reste_praticable(self) -> None:
-        """La nouvelle règle rejette environ un tirage sur neuf ; elle ne doit
-        pas pour autant vider le nuage morphologique."""
         rate, reasons = generator.acceptance_rate(2000)
         self.assertGreater(rate, 0.40, "taux trop bas : %s" % reasons)
-        self.assertIn("monobloc_avec_antenne", reasons)
+        self.assertLess(rate, 1.0, "aucun rejet : les règles ne servent à rien")
 
 
 class GeometrieTest(unittest.TestCase):
@@ -152,6 +160,52 @@ class GeometrieTest(unittest.TestCase):
             self.assertGreater(
                 float(dalle[:, 2].max()), float(voisins[:, 2].max()),
                 "graine %d : la dalle est enterrée dans la coque" % seed)
+
+    def test_le_monobloc_ne_porte_aucune_oreille(self) -> None:
+        """Tenu jusqu'au maillage, et pas seulement dans le génome : un fichier
+        édité à la main ne doit pas pouvoir en faire apparaître.
+
+        Les pièces d'oreille portent un suffixe de type — `ear_l_disc`,
+        `ear_r_fin` — alors que les nœuds s'appellent `ear_l` et `ear_r`. Le
+        premier jet de ce test cherchait les noms de nœuds parmi les noms de
+        pièces : il ne trouvait jamais rien, et passait donc même sans la garde.
+        On vérifie maintenant les deux, par préfixe côté pièces.
+        """
+        for seed in GRAINES:
+            g = generator.generate(seed)
+            g["chassis"] = "monobloc"
+            g["ear.type"] = "disc"          # on force, comme le ferait une édition
+            robot = build(g)
+            self.assertNotIn("ear_l", robot.rig, "graine %d" % seed)
+            self.assertNotIn("ear_r", robot.rig, "graine %d" % seed)
+            oreilles = [p.name for p in robot.parts if p.name.startswith("ear_")]
+            self.assertEqual(oreilles, [], "graine %d" % seed)
+
+    def test_les_trois_ecrans_se_distinguent(self) -> None:
+        """Trois variantes franches, et non trois nuances : si deux tailles se
+        ressemblent, le trait ne sert à rien."""
+        hauteurs = []
+        for taille in SCREEN_HEIGHTS:
+            g = _genome(11, "monobloc")
+            g["screen.height"] = taille
+            dalle = _monde(build(g), "face")
+            hauteurs.append(float(dalle[:, 1].max() - dalle[:, 1].min()))
+        self.assertEqual(hauteurs, sorted(hauteurs), "l'ordre des tailles est faux")
+        for petite, grande in zip(hauteurs, hauteurs[1:]):
+            self.assertGreater(grande, petite * 1.20,
+                               "deux tailles d'écran trop proches : %s" % hauteurs)
+
+    def test_la_taille_d_ecran_n_affecte_pas_la_capsule(self) -> None:
+        """Le paramètre est inerte sur l'autre châssis, et doit le rester."""
+        reference = None
+        for taille in SCREEN_HEIGHTS:
+            g = _genome(11, "capsule")
+            g["screen.height"] = taille
+            dalle = _monde(build(g), "face")
+            haut = round(float(dalle[:, 1].max() - dalle[:, 1].min()), 6)
+            if reference is None:
+                reference = haut
+            self.assertEqual(haut, reference)
 
     def test_la_dalle_est_haute_sur_le_bloc(self) -> None:
         """Un bloc qui regarde depuis son milieu n'a pas un visage, il a un

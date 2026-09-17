@@ -359,10 +359,16 @@ class BuilderTest(unittest.TestCase):
                                 f"graine {seed}, partie {part.name}")
 
     def test_les_surcharges_ne_mutent_pas_le_genome(self) -> None:
-        """La boutique du lot L7 habille le robot sans toucher son identité."""
+        """La boutique du lot L7 habille le robot sans toucher son identité.
+
+        Le châssis est épinglé sur `capsule` depuis le lot L17 : la graine 11
+        tire désormais un monobloc, qui n'a pas d'oreilles du tout, et le test
+        ne pourrait plus montrer qu'une surcharge d'oreille a pris effet.
+        """
         genome = generate(11)
         avant = dict(genome)
-        robot = build(genome, overrides={"ear.type": "antenna",
+        robot = build(genome, overrides={"chassis": "capsule",
+                                         "ear.type": "antenna",
                                          "palette.body": "menthe-pale"})
         self.assertEqual(genome, avant, "le génome d'origine a été modifié")
         self.assertEqual(robot.genome["ear.type"], "antenna")

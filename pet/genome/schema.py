@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,13 @@ EAR_TYPES: tuple[str, ...] = ("none", "antenna", "disc", "fin")
 # erreur de montage. La règle est tenue par `generator.viability_issues`.
 CHASSIS: tuple[str, ...] = ("capsule", "monobloc")
 
+# Tailles d'écran d'un monobloc (lot L17). Trois variantes franches plutôt
+# qu'une valeur continue : le grand écran est le trait de caractère du châssis,
+# et une hauteur tirée au hasard dans un intervalle donne surtout des
+# intermédiaires mous. Inerte sur une capsule, qui porte une dalle et non un
+# écran.
+SCREEN_HEIGHTS: tuple[str, ...] = ("compact", "standard", "large")
+
 
 # --- Le génome ---------------------------------------------------------------
 
@@ -145,6 +152,8 @@ PARAMS: tuple[Num | Choice, ...] = (
     # place de cette ligne est donc un contrat, pas un rangement.
     Choice("chassis", CHASSIS, (62.0, 38.0),
            "capsule dominante, monobloc plus rare"),
+    Choice("screen.height", SCREEN_HEIGHTS, (28.0, 44.0, 28.0),
+           "hauteur d'écran d'un monobloc ; sans effet sur une capsule"),
 )
 
 PARAMS_BY_KEY: dict[str, Num | Choice] = {p.key: p for p in PARAMS}

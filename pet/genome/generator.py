@@ -88,12 +88,13 @@ def viability_issues(genome: dict[str, Any]) -> list[str]:
         if reaches_front and inner_edge < d.plate_half_w + EAR_PLATE_MARGIN:
             issues.append("oreille_croise_dalle")
 
-    # 3. Antenne sur un monobloc (lot L17). Une tige plantée dans un bloc sans
-    #    tête distincte ne se lit pas comme une oreille mais comme une erreur de
-    #    montage. Rejet plutôt que réparation : forcer un autre type d'oreille
-    #    changerait l'identité du robot, ce que `normalize` s'interdit.
-    if genome.get("chassis") == "monobloc" and genome["ear.type"] == "antenna":
-        issues.append("monobloc_avec_antenne")
+    # 3. Oreilles sur un monobloc (lot L17). Montées sur un bloc sans tête
+    #    distincte, elles se lisent comme des poignées. La règle est normalement
+    #    déjà réglée par `normalize` avant d'arriver ici ; elle reste listée
+    #    pour qu'un génome venu d'ailleurs — fichier édité, version future — soit
+    #    signalé plutôt qu'accepté en silence.
+    if genome.get("chassis") == "monobloc" and genome["ear.type"] != "none":
+        issues.append("monobloc_avec_oreilles")
 
     # 4. Les pupilles doivent tenir dans la dalle, écart et taille compris.
     half_span = float(genome["eye.spacing"]) / 2.0 + float(genome["eye.size"])
@@ -112,6 +113,11 @@ def normalize(genome: dict[str, Any]) -> dict[str, Any]:
     out = dict(genome)
     if out["neck.length"] < NECK_MIN_VISIBLE:
         out["neck.length"] = 0.0
+    # Un monobloc n'a pas d'oreilles : ce n'est pas un rejet mais une propriété
+    # du châssis, au même titre que son cou nul. Rejeter aurait fait retirer
+    # quatre tirages sur cinq de ce châssis pour rien.
+    if out.get("chassis") == "monobloc":
+        out["ear.type"] = "none"
     return out
 
 

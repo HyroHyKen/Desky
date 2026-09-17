@@ -76,8 +76,14 @@ PLATE_INFLATE = 1.02
 # hauteur donnée dépend de l'exposant du génome, donc une constante d'angle
 # donnerait un écran d'une taille différente sur chaque robot.
 MONOBLOC_FACE_RISE = 0.44
-MONOBLOC_SCREEN_HALF_H = 0.30
 MONOBLOC_PLATE_U = 1.10
+
+# Les trois hauteurs d'écran, en parts de la demi-hauteur de coque. Choisies au
+# rendu comparatif : en dessous de 0,22 l'écran redevient une fente et les yeux
+# des points, au-delà de 0,38 il avale le bloc. Les yeux étant dimensionnés en
+# fraction de la dalle, ils grandissent avec l'écran — c'est ce qui fait que les
+# trois variantes se distinguent d'un coup d'œil et pas seulement à la mesure.
+MONOBLOC_SCREEN_HALF_H = {"compact": 0.22, "standard": 0.30, "large": 0.38}
 
 
 @dataclass(frozen=True)
@@ -284,8 +290,11 @@ def _face_part(genome: dict[str, Any], d: Dimensions) -> Part:
         # Les deux bords de l'écran sont visés en **hauteur**, puis convertis en
         # angles. L'écran a donc exactement la même taille sur tous les robots,
         # quel que soit l'exposant de leur coque.
-        haut = _v_pour_hauteur(MONOBLOC_FACE_RISE + MONOBLOC_SCREEN_HALF_H, n1)
-        bas = _v_pour_hauteur(MONOBLOC_FACE_RISE - MONOBLOC_SCREEN_HALF_H, n1)
+        demi = MONOBLOC_SCREEN_HALF_H.get(
+            str(genome.get("screen.height", "standard")),
+            MONOBLOC_SCREEN_HALF_H["standard"])
+        haut = _v_pour_hauteur(MONOBLOC_FACE_RISE + demi, n1)
+        bas = _v_pour_hauteur(MONOBLOC_FACE_RISE - demi, n1)
         # Centré sur la **hauteur** visée et non sur l'angle médian. Les deux ne
         # coïncident pas — `y = b·sin(v)^n1` est convexe — et prendre l'angle
         # médian faisait remonter les yeux dans le haut de l'écran, d'autant
@@ -327,6 +336,14 @@ def _ear_parts(genome: dict[str, Any], d: Dimensions,
     qui surchargent l'apparence à l'assemblage, sans muter le génome — d'où le
     paramètre `overrides` de `build`.
     """
+    # Un monobloc n'a pas d'oreilles. Montées sur un bloc sans tête, elles se
+    # lisent comme des poignées et non comme un trait de visage. La règle est
+    # canonisée à la génération (`generator.normalize`) ; elle est **aussi**
+    # tenue ici, qui est la dernière ligne avant le rendu — un génome édité à la
+    # main ne doit pas pouvoir en faire apparaître.
+    if d.monobloc:
+        return [], []
+
     kind = genome["ear.type"]
     if kind == "none":
         return [], []
