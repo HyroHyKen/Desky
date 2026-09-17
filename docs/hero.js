@@ -104,13 +104,18 @@
 
   /* Où regarde-t-il. Le décalage est exprimé en hauteurs de robot, exactement
    * comme `window._anim_context` le calcule dans l'application : c'est ce qui
-   * rend la pose indépendante de la taille d'affichage. */
+   * rend la pose indépendante de la taille d'affichage.
+   *
+   * **Le vertical est inversé, et c'est la règle du produit** : « le y de
+   * l'écran descend, celui du regard monte ». Passer le delta brut donne un
+   * robot qui baisse la tête quand la souris monte — le défaut s'est vu tout de
+   * suite à l'usage, et pas du tout en relisant les signes. */
   function viser() {
     if (!souris) { return [0, 0]; }
     var rect = canvas.getBoundingClientRect();
     var tete = rect.top + hauteur - taille * 0.75;
     return [(souris.x - (rect.left + bot.x)) / taille,
-            (souris.y - tete) / taille];
+            (tete - souris.y) / taille];
   }
 
   function caseDuRegard() {
