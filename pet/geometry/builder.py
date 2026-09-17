@@ -59,19 +59,25 @@ PLATE_V_SPAN = 0.19
 # pour se poser dessus sans z-fighting.
 PLATE_INFLATE = 1.02
 
-# Cadrage de la dalle sur un monobloc (lot L17).
+# Cadrage de l'écran sur un monobloc (lot L17).
 #
-# `RISE` est la hauteur du centre de la dalle, en part de la demi-hauteur de
+# `RISE` est la hauteur du **centre** de l'écran, en part de la demi-hauteur de
 # coque au-dessus de son centre. Un bloc qui regarde depuis son milieu n'a pas
 # un visage, il a un hublot.
 #
-# Les deux facteurs d'étalement corrigent une illusion de proportion : à span
-# égal, la même dalle posée sur un bloc deux fois plus haut se lit comme une
-# fente. Elle est donc élargie et surtout agrandie en hauteur, pour retrouver
-# l'air d'un écran plutôt que d'une meurtrière.
-MONOBLOC_FACE_RISE = 0.52
+# `SCREEN_HALF_H` est la demi-hauteur de l'écran, dans la même unité — et elle
+# est **constante, ce qui est tout l'objet du réglage**. Le grand écran est ce
+# qui fait le charme de ce châssis ; l'indexer sur `face.plate_ratio` comme le
+# fait la capsule le réduisait à une fente sur les génomes au ratio bas. Le
+# ratio continue de gouverner la largeur, donc les écrans restent différents
+# d'un robot à l'autre — ils ne sont simplement plus rabougris.
+#
+# Exprimée en hauteur de monde et non en angle : l'angle qui atteint une
+# hauteur donnée dépend de l'exposant du génome, donc une constante d'angle
+# donnerait un écran d'une taille différente sur chaque robot.
+MONOBLOC_FACE_RISE = 0.44
+MONOBLOC_SCREEN_HALF_H = 0.30
 MONOBLOC_PLATE_U = 1.10
-MONOBLOC_PLATE_V = 1.45
 
 
 @dataclass(frozen=True)
@@ -241,6 +247,17 @@ def _head_part(genome: dict[str, Any], d: Dimensions,
     return Part("head", "head", mesh, color, offset=(0.0, d.head_b, 0.0))
 
 
+def _v_pour_hauteur(part: float, n1: float) -> float:
+    """Angle `v` qui atteint la hauteur `part` de la demi-hauteur, signé.
+
+    Inverse `y = b·sgn(sin v)·|sin v|^n1`. Le plafond à 0,995 évite le pôle,
+    où la surface se referme et où un bord d'écran n'aurait plus de largeur.
+    """
+    cible = min(0.995, abs(part))
+    angle = float(np.arcsin(min(1.0, cible ** (1.0 / n1))))
+    return angle if part >= 0.0 else -angle
+
+
 def _face_part(genome: dict[str, Any], d: Dimensions) -> Part:
     """Coque faciale : portion de la surface du crâne, légèrement gonflée.
 
@@ -264,15 +281,18 @@ def _face_part(genome: dict[str, Any], d: Dimensions) -> Part:
     b = d.shell_b if d.monobloc else d.head_b
 
     if d.monobloc:
-        # `y = b·sin(v)^n1` : on inverse pour viser une hauteur voulue, au lieu
-        # de poser un angle qui donnerait une hauteur différente à chaque
-        # exposant de génome.
-        v_center = float(np.arcsin(min(1.0, MONOBLOC_FACE_RISE ** (1.0 / n1))))
-        # La coque étant plus haute, le même arc y dessinerait une visière qui
-        # ferait le tour du bloc : on ramène l'arc à la hauteur du monde, puis
-        # on l'agrandit du facteur qui rend la dalle lisible comme un écran.
-        v_half = (half_pi * ratio * PLATE_V_SPAN
-                  * (d.head_b / d.shell_b) * MONOBLOC_PLATE_V)
+        # Les deux bords de l'écran sont visés en **hauteur**, puis convertis en
+        # angles. L'écran a donc exactement la même taille sur tous les robots,
+        # quel que soit l'exposant de leur coque.
+        haut = _v_pour_hauteur(MONOBLOC_FACE_RISE + MONOBLOC_SCREEN_HALF_H, n1)
+        bas = _v_pour_hauteur(MONOBLOC_FACE_RISE - MONOBLOC_SCREEN_HALF_H, n1)
+        # Centré sur la **hauteur** visée et non sur l'angle médian. Les deux ne
+        # coïncident pas — `y = b·sin(v)^n1` est convexe — et prendre l'angle
+        # médian faisait remonter les yeux dans le haut de l'écran, d'autant
+        # plus que la coque est cubique : jusqu'à un cinquième de la hauteur
+        # d'écran sur les exposants les plus bas.
+        v_center = _v_pour_hauteur(MONOBLOC_FACE_RISE, n1)
+        v_half = 0.5 * (haut - bas)
     else:
         v_center = PLATE_V_CENTER
         v_half = half_pi * ratio * PLATE_V_SPAN
