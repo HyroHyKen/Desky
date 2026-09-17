@@ -7,14 +7,14 @@ lancement, ce qui ajoute une seconde au démarrage à froid — le §3 en autori
 trois en tout — et fait de l'exécutable une cible bien plus suspecte pour les
 heuristiques antivirus, précisément le risque que le §15 cherche à contenir.
 
-Deux dossiers de données sont embarqués **explicitement**, et c'est le seul
+Les dossiers de données sont embarqués **explicitement**, et c'est le seul
 piège réel de ce fichier : PyInstaller suit les imports, pas les fichiers lus à
-l'exécution. Sans ces deux lignes, l'application se construit sans erreur et
-échoue au premier shader, chez le testeur et pas chez nous.
+l'exécution. Sans ces lignes, l'application se construit sans erreur et échoue
+au premier shader, chez le testeur et pas chez nous.
 
 L'arborescence embarquée reproduit celle des sources (`pet/render/shaders`,
-`pet/assets/items`), ce qui permet à `pet.resources` de résoudre les deux cas
-avec la même logique.
+`pet/assets/items`, `pet/assets/brand`), ce qui permet à `pet.resources` de
+résoudre les deux cas avec la même logique.
 """
 
 from pathlib import Path
@@ -24,6 +24,7 @@ RACINE = Path(SPECPATH).parent
 datas = [
     (str(RACINE / "pet" / "render" / "shaders"), "pet/render/shaders"),
     (str(RACINE / "pet" / "assets" / "items"), "pet/assets/items"),
+    (str(RACINE / "pet" / "assets" / "brand"), "pet/assets/brand"),
 ]
 
 # Modules Qt inutilisés. PySide6 pèse l'essentiel des 90 à 160 Mo annoncés par

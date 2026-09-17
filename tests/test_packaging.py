@@ -151,7 +151,8 @@ class SpecTest(unittest.TestCase):
 
     def test_les_donnees_lues_sont_embarquees(self) -> None:
         spec = self._spec()
-        for attendu in ("pet/render/shaders", "pet/assets/items"):
+        for attendu in ("pet/render/shaders", "pet/assets/items",
+                        "pet/assets/brand"):
             self.assertIn(attendu, spec,
                           "%s n'est pas embarqué par le spec" % attendu)
 

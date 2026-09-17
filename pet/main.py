@@ -82,6 +82,20 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName(APP_NAME)
+
+    # Écran de lancement (lot L19). Ouvert **avant** la fenêtre du robot : ce
+    # qui suit construit un contexte OpenGL et assemble un robot, et c'est
+    # exactement le temps qu'il est là pour couvrir. Seul son fondu d'entrée
+    # s'ajoute au démarrage ; la tenue recouvre un chargement qui avait lieu de
+    # toute façon.
+    from .ui.splash import Splash
+
+    splash = Splash()
+    ecran_demarrage = win32.monitor_from_point(*win32.get_cursor_pos())
+    el, et, ew, eh = ecran_demarrage.work
+    splash.begin((el + ew / 2.0, et + eh * 0.44),
+                 dpr=max(1.0, splash.devicePixelRatioF()))
+    splash.pump_entrance(app)
     # Une fenêtre Qt.Tool n'est pas une fenêtre « primaire » pour Qt : sa
     # fermeture ne déclenche donc pas la sortie. C'est structurel pour ce
     # produit, qui n'a ni barre des tâches ni alt-tab — la sortie est pilotée
@@ -91,10 +105,18 @@ def main(argv: list[str] | None = None) -> int:
     window = PetWindow(settings, genome, diag=args.diag, session=session)
     window.configure_locomotion(gait=args.gait)
     window.show()
+    # Deux fenêtres topmost n'ont pas d'ordre garanti entre elles : sans cette
+    # réaffirmation, le robot apparaît parfois **devant** le logo au moment
+    # précis où celui-ci est censé le couvrir.
+    win32.raise_above(int(splash.winId()), int(window.winId()))
 
     try:
         window.start()
     except GenomeGenerationError as exc:
+        # L'écran de lancement est retiré avant la boîte de dialogue : un logo
+        # posé par-dessus un message d'erreur serait la dernière chose que
+        # l'utilisateur voit avant de désinstaller.
+        splash.close()
         log.error("génome ingénérable : %s", exc)
         QMessageBox.critical(
             None, APP_NAME,
@@ -102,7 +124,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     except ContextCreationError as exc:
-        # Repli GPU (CDC §15) : message clair plutôt qu'un crash.
+        # Repli GPU (CDC §15) : message clair plutôt qu'un crash. L'écran de
+        # lancement est libéré d'abord — un logo posé par-dessus le message
+        # d'erreur serait la dernière chose à voir avant de désinstaller.
+        splash.close()
         log.error("création du contexte OpenGL impossible : %s", exc)
         QMessageBox.critical(
             None, APP_NAME,
@@ -112,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
             "le problème.",
         )
         return 1
+
+    # Le robot est prêt : l'écran peut s'effacer. Il ne part pas pour autant
+    # sur-le-champ — `Fondu` lui impose un temps plein minimum, sans quoi le
+    # logo clignoterait sur une machine rapide.
+    splash.finish()
 
     def shutdown() -> None:
         window.shutdown()
