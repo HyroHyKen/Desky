@@ -4,8 +4,8 @@
     {
       "name": "site",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "http.server", "8769", "--directory", "docs"],
-      "port": 8769
+      "runtimeArgs": ["-m", "http.server", "8770", "--directory", "docs"],
+      "port": 8770
     }
   ]
 }

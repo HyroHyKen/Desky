@@ -35,12 +35,53 @@ class StructureTest(unittest.TestCase):
     def test_chaque_page_porte_ses_marqueurs_une_seule_fois(self) -> None:
         """Deux zones de téléchargement, et le script n'en réécrirait qu'une :
         la page annoncerait deux versions différentes du même logiciel."""
+        paires = ((site_release.DEBUT, site_release.FIN),
+                  (site_release.DONNEES_DEBUT, site_release.DONNEES_FIN))
         for relatif in site_release.PAGES:
             source = _lire(relatif)
-            self.assertEqual(source.count(site_release.DEBUT), 1, relatif)
-            self.assertEqual(source.count(site_release.FIN), 1, relatif)
-            self.assertLess(source.index(site_release.DEBUT),
-                            source.index(site_release.FIN), relatif)
+            for debut, fin in paires:
+                self.assertEqual(source.count(debut), 1, "%s / %s" % (relatif, debut))
+                self.assertEqual(source.count(fin), 1, "%s / %s" % (relatif, fin))
+                self.assertLess(source.index(debut), source.index(fin), relatif)
+
+    def test_les_donnees_structurees_livrees_sont_du_json_valide(self) -> None:
+        """Un JSON-LD malformé est ignoré en silence par les moteurs : la seule
+        façon de s'en apercevoir est de le relire."""
+        import json
+        import re
+
+        for relatif in site_release.PAGES:
+            charge = re.search(
+                r'<script type="application/ld\+json">(.*?)</script>',
+                _lire(relatif), re.S)
+            self.assertIsNotNone(charge, relatif)
+            donnees = json.loads(charge.group(1))
+            self.assertEqual(donnees["@type"], "SoftwareApplication", relatif)
+            # Le lien annoncé aux moteurs doit être celui du bouton.
+            self.assertIn(donnees["downloadUrl"], _lire(relatif), relatif)
+
+    def test_le_favicon_est_l_icone_de_l_application(self) -> None:
+        """À l'octet près, et pas « à peu près » : deux rendus séparés
+        finiraient par diverger, et on aurait deux robots différents selon
+        qu'on regarde l'onglet ou la barre des tâches."""
+        site = (DOCS / "favicon.ico").read_bytes()
+        appli = (RACINE / "packaging" / "desky.ico").read_bytes()
+        self.assertEqual(site, appli)
+
+    def test_les_fichiers_d_indexation_sont_livres(self) -> None:
+        for nom in ("robots.txt", "sitemap.xml", "llms.txt"):
+            self.assertTrue((DOCS / nom).is_file(), nom)
+
+    def test_le_sitemap_liste_exactement_les_pages_publiees(self) -> None:
+        """Une page oubliée ne se référence pas ; une page fantôme fait perdre
+        du crédit au reste du plan."""
+        import xml.etree.ElementTree as ET
+
+        arbre = ET.fromstring((DOCS / "sitemap.xml").read_text(encoding="utf-8"))
+        espace = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+        listees = {n.text for n in arbre.iter(espace + "loc")}
+        attendues = {page["url"] for page in site_release.PAGES.values()}
+        self.assertEqual(listees, attendues)
 
     def test_les_ressources_referencees_sont_livrees(self) -> None:
         """Un chemin cassé ne se voit qu'à l'ouverture, et le champ de
@@ -154,17 +195,49 @@ class RewriteTest(unittest.TestCase):
 
     def test_rien_ne_bouge_hors_des_marqueurs(self) -> None:
         """Le seul vrai danger : un script qui déborde et mange le pied de page
-        un jour de publication."""
+        un jour de publication.
+
+        Deux zones depuis que les données structurées sont réécrites elles
+        aussi, donc trois segments doivent survivre intacts : avant la première,
+        entre les deux, et après la seconde.
+        """
         source, page = self._page()
         sortie = site_release.rewrite(source, "2.0.0", "Desky-2.0.0-setup.exe",
                                       11, page)
         for temoin in ("<title>", "</footer>", "particles.js", "Mentions légales",
-                       "gh attestation verify"):
+                       "gh attestation verify", "hero.js"):
             self.assertIn(temoin, sortie, temoin)
-        avant = source[:source.index(site_release.DEBUT)]
-        apres = source[source.index(site_release.FIN) + len(site_release.FIN):]
-        self.assertTrue(sortie.startswith(avant))
-        self.assertTrue(sortie.endswith(apres))
+
+        def segments(texte: str) -> tuple[str, str, str]:
+            a = texte.index(site_release.DONNEES_DEBUT)
+            b = texte.index(site_release.DONNEES_FIN) + len(site_release.DONNEES_FIN)
+            c = texte.index(site_release.DEBUT)
+            d = texte.index(site_release.FIN) + len(site_release.FIN)
+            self.assertLess(b, c, "les zones se chevauchent")
+            return texte[:a], texte[b:c], texte[d:]
+
+        self.assertEqual(segments(sortie), segments(source))
+
+    def test_les_deux_zones_sont_reecrites_ensemble(self) -> None:
+        """Une page qui annoncerait la bonne version à l'œil et la mauvaise aux
+        moteurs serait pire que muette : on ne verrait jamais l'erreur."""
+        import json
+        import re
+
+        source, page = self._page()
+        sortie = site_release.rewrite(source, "4.5.6", "Desky-4.5.6-setup.exe",
+                                      17, page)
+        charge = re.search(r'<script type="application/ld\+json">(.*?)</script>',
+                           sortie, re.S)
+        self.assertIsNotNone(charge, "données structurées absentes")
+        donnees = json.loads(charge.group(1))
+
+        self.assertEqual(donnees["softwareVersion"], "4.5.6")
+        self.assertIn("v4.5.6/Desky-4.5.6-setup.exe", donnees["downloadUrl"])
+        self.assertEqual(donnees["fileSize"], "17 Mo")
+        # Et le bouton visible dit exactement la même chose.
+        self.assertIn(donnees["downloadUrl"], sortie)
+        self.assertIn("Version 4.5.6 · 17 Mo", sortie)
 
     def test_une_page_sans_marqueur_est_refusee(self) -> None:
         """Échouer bruyamment vaut mieux que publier un bouton mort."""

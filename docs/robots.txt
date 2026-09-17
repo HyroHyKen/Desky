@@ -1,0 +1,12 @@
+# Desky — https://hyrohyken.github.io/Desky/
+#
+# Attention : sur une page de projet GitHub, ce fichier est servi depuis
+# /Desky/robots.txt, alors que les robots ne lisent que celui de la racine du
+# domaine. Il n'a donc aucun effet aujourd'hui, et en prendra un dès qu'un nom
+# de domaine propre placera le site à la racine. Il est livré maintenant pour
+# que ce jour-là il n'y ait rien à penser.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://hyrohyken.github.io/Desky/sitemap.xml

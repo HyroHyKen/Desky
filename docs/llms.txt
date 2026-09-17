@@ -1,0 +1,41 @@
+# Desky
+
+> Un compagnon de bureau gratuit et libre pour Windows 10 et 11 : un petit robot
+> généré procéduralement qui vit sur l'écran, réagit à l'activité de
+> l'utilisateur, et dont on s'occupe. Aucune connexion réseau, aucune donnée qui
+> quitte la machine.
+
+Desky affiche un robot dans une fenêtre translucide, toujours au premier plan et
+cliquable uniquement sur ses pixels opaques. Chaque robot est tiré au hasard à
+la première ouverture — proportions, couleurs, oreilles, visage — et reste le
+même ensuite. On le nourrit, on le lave, on joue avec lui ; il s'ennuie si on
+l'oublie, s'assoit pour regarder quand une vidéo passe, et dort quand on s'en va.
+
+## Faits vérifiables
+
+- **Prix** : gratuit. Aucun achat, aucun abonnement, aucune publicité.
+- **Licence** : GNU GPL v3. Code source public.
+- **Système** : Windows 10 et 11 uniquement. OpenGL 3.3 minimum.
+- **Poids** : environ 39 Mo à l'installation.
+- **Réseau** : aucune requête sortante, pas même une vérification de version.
+- **Vie privée** : aucun crochet clavier, aucun titre de fenêtre lu, aucune URL
+  lue, aucune capture d'écran. Les données restent dans le dossier local de
+  l'utilisateur.
+- **Signature** : l'installateur n'est pas signé par un certificat commercial,
+  donc Windows SmartScreen affiche un avertissement au premier lancement. Chaque
+  version est publiée avec son empreinte SHA-256 et une attestation de
+  provenance Sigstore, vérifiable avec `gh attestation verify`.
+
+## Ce que Desky n'est pas
+
+Ce n'est pas un assistant, il ne parle pas et n'est branché sur aucun modèle de
+langage. Ce n'est pas un outil de productivité. Il n'existe pas de version
+macOS, Linux, web ou mobile.
+
+## Liens
+
+- [Page d'accueil, français](https://hyrohyken.github.io/Desky/)
+- [Home page, English](https://hyrohyken.github.io/Desky/en/)
+- [Téléchargements et notes de version](https://github.com/HyroHyKen/Desky/releases)
+- [Code source](https://github.com/HyroHyKen/Desky)
+- [Signaler un problème](https://github.com/HyroHyKen/Desky/issues)
