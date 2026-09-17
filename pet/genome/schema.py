@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -90,6 +90,18 @@ ACCENT_COLORS: dict[str, str] = {
 
 EAR_TYPES: tuple[str, ...] = ("none", "antenna", "disc", "fin")
 
+# Châssis : la silhouette d'ensemble (lot L17).
+#
+# `capsule` est l'historique — une tête posée sur un corps, éventuellement
+# séparés par un cou. `monobloc` est une coque d'un seul tenant, sans jointure
+# visible : le visage, les oreilles et les chapeaux se posent sur sa partie
+# haute, mais la silhouette ne se brise nulle part.
+#
+# Un monobloc **ne porte pas d'antenne** : une tige plantée dans un bloc qui n'a
+# pas de tête distincte ne se lit pas comme une oreille, elle se lit comme une
+# erreur de montage. La règle est tenue par `generator.viability_issues`.
+CHASSIS: tuple[str, ...] = ("capsule", "monobloc")
+
 
 # --- Le génome ---------------------------------------------------------------
 
@@ -125,6 +137,14 @@ PARAMS: tuple[Num | Choice, ...] = (
            "cyan dominant, ambre et magenta rares"),
     # Trait
     Num("outline.width", 0.80, 1.60, "épaisseur du contour, cf. décision §17.3"),
+    # Châssis (lot L17).
+    #
+    # **En dernier, et c'est impératif.** `generator.draw` consomme le PRNG dans
+    # l'ordre de ce tuple : insérer un paramètre ailleurs qu'à la fin décalerait
+    # tous les tirages suivants, et chaque graine donnerait un autre robot. La
+    # place de cette ligne est donc un contrat, pas un rangement.
+    Choice("chassis", CHASSIS, (62.0, 38.0),
+           "capsule dominante, monobloc plus rare"),
 )
 
 PARAMS_BY_KEY: dict[str, Num | Choice] = {p.key: p for p in PARAMS}

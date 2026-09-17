@@ -59,6 +59,20 @@ PLATE_V_SPAN = 0.19
 # pour se poser dessus sans z-fighting.
 PLATE_INFLATE = 1.02
 
+# Cadrage de la dalle sur un monobloc (lot L17).
+#
+# `RISE` est la hauteur du centre de la dalle, en part de la demi-hauteur de
+# coque au-dessus de son centre. Un bloc qui regarde depuis son milieu n'a pas
+# un visage, il a un hublot.
+#
+# Les deux facteurs d'étalement corrigent une illusion de proportion : à span
+# égal, la même dalle posée sur un bloc deux fois plus haut se lit comme une
+# fente. Elle est donc élargie et surtout agrandie en hauteur, pour retrouver
+# l'air d'un écran plutôt que d'une meurtrière.
+MONOBLOC_FACE_RISE = 0.52
+MONOBLOC_PLATE_U = 1.10
+MONOBLOC_PLATE_V = 1.45
+
 
 @dataclass(frozen=True)
 class Part:
@@ -150,8 +164,17 @@ def _build_rig(d: Dimensions) -> Rig:
     # Nœud de visage placé au centre de la tête : la coque faciale est déjà
     # exprimée dans le repère du crâne, et ce nœud sera le pivot du visage SDF
     # du lot L3 puis de ses expressions au lot L4.
+    #
+    # Sur un monobloc, ce nœud descend au **centre de la coque** et non au
+    # centre d'une tête qui n'existe pas : la dalle y est un morceau de la
+    # surface de la coque, donc son ellipsoïde de référence doit être celui de
+    # la coque, centré au même endroit (cf. `_face_part`).
+    if d.monobloc:
+        face_y = d.shell_b - (2.0 * d.body_b + d.neck_h - sink)
+    else:
+        face_y = d.head_b
     rig.add(Node("face", parent="head",
-                 translation=np.array([0.0, d.head_b, 0.0], dtype="f4")))
+                 translation=np.array([0.0, face_y, 0.0], dtype="f4")))
     return rig
 
 
@@ -163,6 +186,33 @@ def _body_part(genome: dict[str, Any], d: Dimensions,
         taper=float(genome["body.taper"]),
     )
     return Part("body", "body_flex", mesh, color)
+
+
+def _shell_part(genome: dict[str, Any], d: Dimensions,
+                color: tuple[float, float, float]) -> Part:
+    """Coque d'un monobloc : **un seul volume**, du sol au sommet.
+
+    Elle remplace à elle seule le corps, le cou et la tête. Portée par
+    `body_flex` comme le corps d'une capsule, et pour la même raison : c'est ce
+    nœud qui reçoit la respiration et l'encaissement du lot L10. Une coque
+    montée sur `head` serait tournée par le regard mais ne s'écraserait jamais
+    en atterrissant.
+
+    Les exposants sont ceux de la tête : un génome au crâne cubique donne un
+    bloc cubique, un crâne rond donne une gélule. Le châssis change la
+    silhouette, il n'efface pas le génome.
+    """
+    mesh = superellipsoid(
+        a=d.head_a, b=d.shell_b, c=d.head_c,
+        n1=float(genome["head.exponent_n1"]),
+        n2=float(genome["head.exponent_n2"]),
+        taper=float(genome["body.taper"]),
+    )
+    # Le maillage est centré sur lui-même ; `body_flex` est à hauteur de
+    # `body_b`. On remonte donc la coque de la différence pour que son pied
+    # touche le sol.
+    return Part("shell", "body_flex", mesh, color,
+                offset=(0.0, d.shell_b - d.body_b, 0.0))
 
 
 def _neck_part(d: Dimensions, color: tuple[float, float, float]) -> Part | None:
@@ -205,17 +255,43 @@ def _face_part(genome: dict[str, Any], d: Dimensions) -> Part:
     """
     ratio = float(genome["face.plate_ratio"])
     half_pi = np.pi / 2.0
+    n1 = float(genome["head.exponent_n1"])
+
+    # Sur quel volume la dalle est-elle découpée. C'est **toute** la différence
+    # entre les deux châssis : une dalle taillée dans une petite tête et posée
+    # sur un grand bloc voit ses bords s'enfoncer, et il ne reste qu'une fente
+    # sombre — voire rien du tout sur les coques les plus rondes.
+    b = d.shell_b if d.monobloc else d.head_b
+
+    if d.monobloc:
+        # `y = b·sin(v)^n1` : on inverse pour viser une hauteur voulue, au lieu
+        # de poser un angle qui donnerait une hauteur différente à chaque
+        # exposant de génome.
+        v_center = float(np.arcsin(min(1.0, MONOBLOC_FACE_RISE ** (1.0 / n1))))
+        # La coque étant plus haute, le même arc y dessinerait une visière qui
+        # ferait le tour du bloc : on ramène l'arc à la hauteur du monde, puis
+        # on l'agrandit du facteur qui rend la dalle lisible comme un écran.
+        v_half = (half_pi * ratio * PLATE_V_SPAN
+                  * (d.head_b / d.shell_b) * MONOBLOC_PLATE_V)
+    else:
+        v_center = PLATE_V_CENTER
+        v_half = half_pi * ratio * PLATE_V_SPAN
+
     mesh = superellipsoid_patch(
         a=d.head_a * PLATE_INFLATE,
-        b=d.head_b * PLATE_INFLATE,
+        b=b * PLATE_INFLATE,
         c=d.head_c * PLATE_INFLATE,
-        n1=float(genome["head.exponent_n1"]),
+        n1=n1,
         n2=float(genome["head.exponent_n2"]),
         u_center=half_pi,                       # face avant : z maximal
-        u_half=half_pi * ratio * PLATE_U_SPAN,
-        v_center=PLATE_V_CENTER,
-        v_half=half_pi * ratio * PLATE_V_SPAN,
+        u_half=half_pi * ratio * PLATE_U_SPAN
+        * (MONOBLOC_PLATE_U if d.monobloc else 1.0),
+        v_center=v_center,
+        v_half=v_half,
         sectors=26, rings=18,
+        # La coque d'un monobloc est effilée ; sans le même effilement ici, la
+        # dalle s'enfonce dedans dès que le haut s'élargit.
+        taper=float(genome["body.taper"]) if d.monobloc else 1.0,
     )
     return Part("face", "face", mesh, PLATE_COLOR)
 
@@ -311,13 +387,19 @@ def build(genome: dict[str, Any], overrides: dict[str, Any] | None = None) -> Ro
     accent = accent_rgb(effective)
 
     rig = _build_rig(d)
-    parts: list[Part] = [_body_part(effective, d, body_color)]
 
-    neck = _neck_part(d, body_color)
-    if neck is not None:
-        parts.append(neck)
+    # Le rig est le **même** pour les deux châssis — c'est déjà le parti pris du
+    # cou de longueur nulle, étendu d'un cran. Seules les pièces changent : un
+    # monobloc en pose une là où la capsule en pose trois.
+    if d.monobloc:
+        parts: list[Part] = [_shell_part(effective, d, body_color)]
+    else:
+        parts = [_body_part(effective, d, body_color)]
+        neck = _neck_part(d, body_color)
+        if neck is not None:
+            parts.append(neck)
+        parts.append(_head_part(effective, d, body_color))
 
-    parts.append(_head_part(effective, d, body_color))
     parts.append(_face_part(effective, d))
 
     ear_nodes, ear_parts = _ear_parts(effective, d, body_color, accent)

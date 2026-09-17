@@ -218,6 +218,7 @@ def superellipsoid_patch(
     u_center: float, u_half: float,
     v_center: float, v_half: float,
     sectors: int = 24, rings: int = 18,
+    taper: float = 1.0,
 ) -> Mesh:
     """Portion ouverte de superellipsoïde : une coque, pas un volume fermé.
 
@@ -233,6 +234,13 @@ def superellipsoid_patch(
 
     Repère : la face avant est en u = π/2, puisque z est maximal là où
     sgn(sin u)|sin u|^n2 vaut 1.
+
+    `taper` reprend exactement celui de `superellipsoid`, et il n'est pas
+    décoratif : la dalle faciale d'un monobloc est découpée dans la surface de
+    sa coque, et si la coque est effilée alors que la dalle ne l'est pas, la
+    dalle s'enfonce dedans dès que l'effilement élargit le haut. Mesuré au lot
+    L17 : sur un `taper` de 1,08, la coque atteignait z = 0,515 et la dalle
+    0,512 — le visage disparaissait entièrement.
     """
     if min(a, b, c) <= 0.0:
         raise ValueError("les demi-dimensions doivent être strictement positives")
@@ -260,6 +268,9 @@ def superellipsoid_patch(
 
     pos = np.stack([px, py, pz], axis=-1).reshape(-1, 3)
     nrm = np.stack([nx, ny, nz], axis=-1).reshape(-1, 3)
+
+    if taper != 1.0:
+        pos, nrm = _apply_taper(pos, nrm, b, taper)
 
     lengths = np.linalg.norm(nrm, axis=1, keepdims=True)
     nrm = np.divide(nrm, lengths, out=np.tile([0.0, 0.0, 1.0], (len(nrm), 1)),

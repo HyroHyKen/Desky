@@ -35,6 +35,8 @@ EXPECTED_ORDER = [
     "face.plate_ratio", "eye.spacing", "eye.size", "eye.corner_radius",
     "palette.body", "palette.accent",
     "outline.width",
+    # Lot L17. Ajouté en fin de liste, et c'est tout l'objet du test ci-dessous.
+    "chassis",
 ]
 
 

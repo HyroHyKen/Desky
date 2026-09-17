@@ -88,7 +88,14 @@ def viability_issues(genome: dict[str, Any]) -> list[str]:
         if reaches_front and inner_edge < d.plate_half_w + EAR_PLATE_MARGIN:
             issues.append("oreille_croise_dalle")
 
-    # 3. Les pupilles doivent tenir dans la dalle, écart et taille compris.
+    # 3. Antenne sur un monobloc (lot L17). Une tige plantée dans un bloc sans
+    #    tête distincte ne se lit pas comme une oreille mais comme une erreur de
+    #    montage. Rejet plutôt que réparation : forcer un autre type d'oreille
+    #    changerait l'identité du robot, ce que `normalize` s'interdit.
+    if genome.get("chassis") == "monobloc" and genome["ear.type"] == "antenna":
+        issues.append("monobloc_avec_antenne")
+
+    # 4. Les pupilles doivent tenir dans la dalle, écart et taille compris.
     half_span = float(genome["eye.spacing"]) / 2.0 + float(genome["eye.size"])
     if half_span > 0.94:
         issues.append(f"pupilles_hors_dalle({half_span:.2f})")

@@ -74,6 +74,32 @@ class Dimensions:
     ear_x: float            # position d'attache en X, valeur absolue
     plate_half_w: float     # demi-largeur de la dalle faciale
     plate_z: float          # profondeur d'implantation de la dalle
+    chassis: str = "capsule"
+
+    @property
+    def monobloc(self) -> bool:
+        return self.chassis == "monobloc"
+
+    @property
+    def shell_b(self) -> float:
+        """Demi-hauteur de la coque d'un monobloc, du sol au sommet.
+
+        Le cou étant nul sur ce châssis, elle vaut exactement la somme des deux
+        demi-hauteurs : la coque occupe la place du corps **et** de la tête.
+        """
+        return self.body_b + self.head_b
+
+    @property
+    def carrier_top(self) -> float:
+        """Sommet, au repos, du maillage porté par `body_flex`.
+
+        Sert à reporter la montée de poitrine sur le cou quand le corps
+        respire ou encaisse (cf. `anim.layers.apply_channels`). La capsule y
+        porte son corps, le monobloc sa coque entière — et sans cette
+        distinction, le visage d'un monobloc glisserait sur son bloc à chaque
+        atterrissage.
+        """
+        return 2.0 * (self.shell_b if self.monobloc else self.body_b)
 
     @property
     def head_width(self) -> float:
@@ -105,6 +131,16 @@ def dimensions(genome: dict[str, Any]) -> Dimensions:
     body_b = 0.5 * BODY_HEIGHT * float(genome["body.height"])
     ear_r = EAR_SIZE * float(genome["ear.size"])
     head_c = head_a * HEAD_DEPTH_RATIO
+    chassis = str(genome.get("chassis", "capsule"))
+
+    # Un monobloc est une colonne : **même largeur en haut qu'en bas**, et pas
+    # de cou. C'est ce qui permet à la dalle faciale, aux oreilles et aux
+    # chapeaux — tous cotés en demi-dimensions de tête — de tomber juste sur la
+    # coque sans qu'aucun d'eux n'ait à savoir qu'il y a deux châssis.
+    neck_h = float(genome["neck.length"])
+    if chassis == "monobloc":
+        body_a = head_a
+        neck_h = 0.0
 
     return Dimensions(
         head_a=head_a,
@@ -114,10 +150,11 @@ def dimensions(genome: dict[str, Any]) -> Dimensions:
         body_b=body_b,
         body_c=body_a * BODY_DEPTH_RATIO,
         neck_r=min(head_a * NECK_RADIUS_RATIO, body_a * NECK_MAX_BODY_RATIO),
-        neck_h=float(genome["neck.length"]),
+        neck_h=neck_h,
         ear_r=ear_r,
         ear_x=head_a * _remap(float(genome["ear.spread"]), 0.60, 1.40,
                               EAR_SPREAD_MIN, EAR_SPREAD_MAX),
         plate_half_w=head_a * float(genome["face.plate_ratio"]),
         plate_z=head_c * PLATE_DEPTH_RATIO,
+        chassis=chassis,
     )

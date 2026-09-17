@@ -442,6 +442,21 @@ class ActionLayer:
 # ---------------------------------------------------------------------------
 
 
+# Répartition du regard sur un monobloc (lot L17).
+#
+# Une coque d'un seul tenant n'a pas de tête à tourner. Faire pivoter le nœud
+# `head` n'y ferait tourner que la dalle faciale, qui épouse la surface du bloc
+# et s'en décollerait aussitôt. La rotation est donc **reportée sur le corps** :
+# c'est le bloc entier qui s'oriente, et les pupilles — dont le ressort est le
+# plus rapide des trois (§10.2) — font le reste du travail.
+#
+# Le report est partiel et borné : un bloc qui pivoterait autant qu'une tête ne
+# se lirait pas comme un regard mais comme une chute.
+MONOBLOC_TRANSFER = 0.52
+MAX_MONOBLOC_YAW = math.radians(24.0)
+MAX_MONOBLOC_PITCH = math.radians(15.0)
+
+
 def apply_channels(pose: RigPose, channels: Channels, dims: Dimensions) -> FaceState:
     """Écrit les canaux dans le rig, et retourne l'état de visage correspondant.
 
@@ -458,8 +473,20 @@ def apply_channels(pose: RigPose, channels: Channels, dims: Dimensions) -> FaceS
     # que dans chaque couche et chaque courbe. Sans cette convention explicite,
     # le suivi du curseur baissait la tête quand la souris montait, et le
     # bâillement s'inclinait du mauvais côté.
-    pose.offset("body", rotation=(-channels.get("body.pitch", 0.0),
-                                  channels.get("body.yaw", 0.0),
+    head_yaw = channels.get("head.yaw", 0.0)
+    head_pitch = channels.get("head.pitch", 0.0)
+    body_yaw = channels.get("body.yaw", 0.0)
+    body_pitch = channels.get("body.pitch", 0.0)
+
+    if dims.monobloc:
+        body_yaw = _clamp(body_yaw + head_yaw * MONOBLOC_TRANSFER,
+                          -MAX_MONOBLOC_YAW, MAX_MONOBLOC_YAW)
+        body_pitch = _clamp(body_pitch + head_pitch * MONOBLOC_TRANSFER,
+                            -MAX_MONOBLOC_PITCH, MAX_MONOBLOC_PITCH)
+        # La dalle ne bouge plus du tout : elle est collée au bloc.
+        head_yaw = head_pitch = 0.0
+
+    pose.offset("body", rotation=(-body_pitch, body_yaw,
                                   channels.get("body.roll", 0.0)))
     pose.offset("body", translation=(0.0, channels.get("body.lift", 0.0), 0.0))
 
@@ -484,10 +511,13 @@ def apply_channels(pose: RigPose, channels: Channels, dims: Dimensions) -> FaceS
         w = 1.0 / math.sqrt(s)
         pose.offset("body_flex", scale=(w, s, w),
                     translation=(0.0, dims.body_b * (s - 1.0), 0.0))
-        pose.offset("neck", translation=(0.0, 2.0 * dims.body_b * (s - 1.0), 0.0))
+        # Report de la montée de poitrine sur le cou. Le sommet du maillage
+        # porteur n'est pas le même selon le châssis — `carrier_top` le dit —
+        # et sans cette distinction le visage d'un monobloc glisserait sur son
+        # bloc à chaque atterrissage.
+        pose.offset("neck", translation=(0.0, dims.carrier_top * (s - 1.0), 0.0))
 
-    pose.offset("head", rotation=(-channels.get("head.pitch", 0.0),
-                                  channels.get("head.yaw", 0.0),
+    pose.offset("head", rotation=(-head_pitch, head_yaw,
                                   channels.get("head.roll", 0.0)))
     pose.offset("head", translation=(0.0, channels.get("head.lift", 0.0), 0.0))
 
