@@ -173,10 +173,17 @@ def main(argv: list[str] | None = None) -> int:
     # l'absence de **nom**, et non le drapeau `first_run` du génome : le nom est
     # ce qui manque vraiment tant que le baptême n'a pas eu lieu, et ce repère
     # survit à un plantage entre le tirage du génome et la saisie.
-    unboxing = None
+    # Premier lancement, en deux temps depuis le lot L21 : on choisit d'abord le
+    # châssis, **puis** le carton tombe. L'ordre raconte quelque chose — on
+    # commande chez Desky Inc., le colis arrive ensuite — et il est surtout le
+    # seul possible : le châssis entre dans le génome, donc dans la géométrie,
+    # et le robot ne peut pas sortir du carton avant d'avoir la sienne.
+    #
+    # Les fenêtres sont retenues dans `scene` : une locale disparaîtrait avec la
+    # fonction et Qt les détruirait au milieu de l'accueil.
+    scene: dict = {}
     if not session.name:
-        from .ui.unboxing import HEIGHT as BOX_WINDOW_H
-        from .ui.unboxing import Unboxing
+        from .ui.chassis_choice import ChassisChooser
 
         window.begin_onboarding()
         window.hide()
@@ -189,15 +196,36 @@ def main(argv: list[str] | None = None) -> int:
         centre_x = wl + ww / 2.0
         milieu_y = wt + wh * 0.42
 
-        unboxing = Unboxing()
-        unboxing.opened.connect(
-            lambda: window.emerge_at(centre_x, milieu_y + 40.0))
-        unboxing.start(int(centre_x / dpr),
-                       int(milieu_y / dpr - BOX_WINDOW_H * 0.55),
-                       screen_top=int(wt / dpr))
-        log.info("premier lancement : carton lâché")
+        def lacher_le_carton() -> None:
+            from .ui.unboxing import HEIGHT as BOX_WINDOW_H
+            from .ui.unboxing import Unboxing
+
+            carton = Unboxing()
+            carton.opened.connect(
+                lambda: window.emerge_at(centre_x, milieu_y + 40.0))
+            carton.start(int(centre_x / dpr),
+                         int(milieu_y / dpr - BOX_WINDOW_H * 0.55),
+                         screen_top=int(wt / dpr))
+            scene["carton"] = carton
+            log.info("premier lancement : carton lâché")
+            if args.diag:
+                print("[diag] premier lancement : clic sur le carton pour ouvrir")
+
+        def choisi(chassis: str) -> None:
+            window.apply_chassis(chassis)
+            lacher_le_carton()
+
+        choix = ChassisChooser()
+        choix.chosen.connect(choisi)
+        # Parti sans choisir : le tirage garde la main, et le carton tombe quand
+        # même. Rien ne se bloque sur une fenêtre qu'on a fermée.
+        choix.dismissed.connect(lacher_le_carton)
+        choix.move(int((wl + ww / 2.0) / dpr - choix.width() / 2),
+                   int((wt + wh / 2.0) / dpr - choix.height() / 2))
+        choix.start()
+        scene["choix"] = choix
         if args.diag:
-            print("[diag] premier lancement : clic sur le carton pour ouvrir")
+            print("[diag] premier lancement : choix du châssis")
 
     if args.run_seconds > 0:
         from PySide6.QtCore import QTimer

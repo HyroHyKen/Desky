@@ -79,13 +79,13 @@ MM_PAR_UNITE = 42.0
 # --- Les vignettes ----------------------------------------------------------
 
 VIGNETTE = 240
-EXEMPLES = 6
+EXEMPLES = 10
 
 # Graines des exemples, par châssis. Choisies pour couvrir la variété plutôt que
 # tirées au hasard : c'est une vitrine, elle doit montrer les extrêmes.
 GRAINES_EXEMPLES = {
-    "capsule": (3, 47, 101, 512, 1234, 4242),
-    "monobloc": (11, 23, 88, 233, 777, 2024),
+    "capsule": (3, 47, 101, 512, 1234, 4242, 77, 350, 1861, 9001),
+    "monobloc": (11, 23, 88, 233, 777, 2024, 140, 606, 1492, 8128),
 }
 
 

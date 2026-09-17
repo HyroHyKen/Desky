@@ -11,6 +11,10 @@ chose, et elle n'a pas à encombrer la lecture du reste.
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger("desky.window")
+
 # Sortie du carton et présentations. Les durées sont celles d'une petite scène
 # muette : assez lentes pour se lire, assez courtes pour ne pas se faire
 # attendre. Le tout dure un peu moins de cinq secondes.
@@ -131,3 +135,38 @@ class OnboardingMixin:
         panel.open_page("name")
         self.place_panel()
         panel.open_panel()
+
+    # -- choix du châssis (lot L21) -----------------------------------------
+
+    def apply_chassis(self, chassis: str) -> bool:
+        """Fixe le châssis choisi, définitivement, et reconstruit le robot.
+
+        Le châssis entre dans le **génome** et non dans `appearance` : c'est ce
+        qui rend la promesse « définitif » vraie côté données, et pas seulement
+        côté bouton. La boutique lit `appearance`, elle ne verra jamais ce
+        paramètre.
+
+        Le reste du génome est laissé intact : l'utilisateur choisit une
+        silhouette, il ne commande pas un robot sur mesure. Seules les oreilles
+        sont remises à zéro si le châssis les interdit, par la même
+        canonisation que le tirage (`generator.normalize`).
+        """
+        from ...genome.generator import normalize
+        from ...genome.schema import CHASSIS
+        from ...state import save
+
+        if chassis not in CHASSIS or self.genome.get("chassis") == chassis:
+            return False
+
+        self.genome = normalize({**self.genome, "chassis": chassis})
+        store = save.genome_store()
+        store.data = dict(self.genome)
+        try:
+            store.save(force=True)
+        except OSError as exc:
+            # Le robot est déjà celui qu'on a choisi à l'écran ; ne pas pouvoir
+            # l'écrire est ennuyeux au prochain lancement, pas maintenant.
+            log.warning("châssis non enregistré : %s", type(exc).__name__)
+        self._rebuild_robot()
+        log.info("châssis appliqué : %s", chassis)
+        return True

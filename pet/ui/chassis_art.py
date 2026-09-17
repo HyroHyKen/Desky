@@ -38,12 +38,18 @@ def blueprint(chassis: str, directory: Path | None = None) -> Path | None:
 def examples(chassis: str, directory: Path | None = None) -> list[Path]:
     """Vignettes d'exemples, triées pour que le défilement soit reproductible.
 
-    Le tri est lexicographique, donc `exemple_x_10` passerait avant
-    `exemple_x_2`. Sans conséquence tant qu'on en reste à un chiffre, et le
-    défilement n'a de toute façon pas d'ordre qui signifie quelque chose — mais
-    autant le savoir avant d'en ajouter une dixième.
+    Le tri est **numérique** et non lexicographique : à dix vignettes, un tri de
+    chaînes place `exemple_x_10` avant `exemple_x_2`. L'ordre du défilement n'a
+    certes pas de sens propre, mais un ordre qui saute d'un cran dès qu'on passe
+    la dizaine est le genre de bizarrerie qu'on met une heure à comprendre.
     """
     base = directory if directory is not None else ASSET_DIR
     if not base.is_dir():
         return []
-    return sorted(base.glob((EXEMPLE % chassis) + "*.png"))
+    prefixe = EXEMPLE % chassis
+
+    def rang(chemin: Path) -> tuple[int, str]:
+        queue = chemin.stem[len(prefixe):]
+        return (int(queue) if queue.isdigit() else 1 << 30, chemin.name)
+
+    return sorted(base.glob(prefixe + "*.png"), key=rang)
