@@ -135,5 +135,31 @@ class BudgetTest(unittest.TestCase):
         self.assertLess(_jusqu_a_la_fin(fondu), 1.5)
 
 
+class EnchainementTest(unittest.TestCase):
+    """Ce qui attend la fin de l'écran de lancement.
+
+    L'accueil du lot L21 s'ouvre sur `finished`. Deux façons de se tromper :
+    l'émettre trop tôt, et les deux écrans se superposent ; ne jamais l'émettre,
+    et l'accueil ne s'ouvre pas du tout. Les deux sont couverts ici, sur la
+    machine à phases plutôt que sur le widget, qui demanderait un écran.
+    """
+
+    def test_le_fondu_ne_se_dit_fini_qu_a_la_fin(self) -> None:
+        fondu = Fondu()
+        fondu.pret()
+        for _ in range(int((ENTREE + TENUE_MIN + SORTIE) / DT) - 4):
+            fondu.step(DT)
+            self.assertFalse(fondu.fini, "annoncé fini alors qu'il est visible")
+        _jusqu_a_la_fin(fondu)
+        self.assertTrue(fondu.fini)
+
+    def test_un_ecran_sans_image_est_fini_d_emblee(self) -> None:
+        """Sans logo à afficher, le signal ne partira jamais : l'appelant doit
+        pouvoir le savoir avant de s'y abonner, sinon l'accueil reste fermé."""
+        fondu = Fondu()
+        fondu.phase = FINI
+        self.assertTrue(fondu.fini)
+        self.assertEqual(fondu.opacite, 0.0)
+
 if __name__ == "__main__":
     unittest.main()

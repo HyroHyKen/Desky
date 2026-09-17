@@ -25,7 +25,7 @@ avait lieu de toute façon.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -111,6 +111,12 @@ class Splash(QWidget):
     impardonnable pour une image.
     """
 
+    # Émis quand le logo a **fini de s'effacer**, et pas quand on l'autorise à
+    # partir. La différence compte : l'accueil du lot L21 s'ouvre là-dessus, et
+    # une fenêtre de choix qui apparaît par-dessus un logo encore visible donne
+    # deux écrans superposés au moment précis où l'on découvre le produit.
+    finished = Signal()
+
     HZ = 60
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -140,6 +146,16 @@ class Splash(QWidget):
         self._timer.timeout.connect(self._tick)
 
     # -- vie -----------------------------------------------------------------
+
+    @property
+    def fini(self) -> bool:
+        """L'écran est-il déjà parti ? Vrai aussi s'il n'a jamais pu paraître.
+
+        Un appelant qui attend `finished` doit d'abord poser cette question :
+        sans logo à afficher, le signal ne partira jamais et ce qui l'attendait
+        ne s'ouvrirait pas.
+        """
+        return self.fondu.fini
 
     def begin(self, centre: tuple[float, float], dpr: float = 1.0) -> None:
         """Affiche l'écran, centré sur un point donné en pixels **physiques**."""
@@ -183,6 +199,7 @@ class Splash(QWidget):
         if self.fondu.fini:
             self._timer.stop()
             self.close()
+            self.finished.emit()
             self.deleteLater()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (API Qt)

@@ -215,17 +215,27 @@ def main(argv: list[str] | None = None) -> int:
             window.apply_chassis(chassis)
             lacher_le_carton()
 
-        choix = ChassisChooser()
-        choix.chosen.connect(choisi)
-        # Parti sans choisir : le tirage garde la main, et le carton tombe quand
-        # même. Rien ne se bloque sur une fenêtre qu'on a fermée.
-        choix.dismissed.connect(lacher_le_carton)
-        choix.move(int((wl + ww / 2.0) / dpr - choix.width() / 2),
-                   int((wt + wh / 2.0) / dpr - choix.height() / 2))
-        choix.start()
-        scene["choix"] = choix
-        if args.diag:
-            print("[diag] premier lancement : choix du châssis")
+        def ouvrir_le_choix() -> None:
+            choix = ChassisChooser()
+            choix.chosen.connect(choisi)
+            # Parti sans choisir : le tirage garde la main, et le carton tombe
+            # quand même. Rien ne se bloque sur une fenêtre qu'on a fermée.
+            choix.dismissed.connect(lacher_le_carton)
+            choix.move(int((wl + ww / 2.0) / dpr - choix.width() / 2),
+                       int((wt + wh / 2.0) / dpr - choix.height() / 2))
+            choix.start()
+            scene["choix"] = choix
+            if args.diag:
+                print("[diag] premier lancement : choix du châssis")
+
+        # **Après** que le logo a fini de s'effacer, et non dès qu'on l'autorise
+        # à partir : sinon les deux écrans se superposent une seconde, au moment
+        # précis où l'on découvre le produit. Le cas du logo qui n'a jamais pu
+        # paraître est traité à part — son signal ne viendrait jamais.
+        if splash.fini:
+            ouvrir_le_choix()
+        else:
+            splash.finished.connect(ouvrir_le_choix)
 
     if args.run_seconds > 0:
         from PySide6.QtCore import QTimer
