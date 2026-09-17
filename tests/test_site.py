@@ -95,10 +95,149 @@ class StructureTest(unittest.TestCase):
                 cible = (page.parent / lien).resolve()
                 self.assertTrue(cible.is_file(), "%s → %s" % (relatif, lien))
 
-    def test_la_planche_des_particules_est_livree(self) -> None:
-        """Référencée par le script et non par le HTML, donc invisible au test
+    def test_les_planches_des_particules_sont_livrees(self) -> None:
+        """Référencées par le script et non par le HTML, donc invisibles au test
         de liens ci-dessus."""
-        self.assertTrue((DOCS / "assets" / "deskys.webp").is_file())
+        from tools import site_deskys
+
+        for fichier, _, _ in site_deskys.PLANCHES.values():
+            self.assertTrue((DOCS / "assets" / fichier).is_file(), fichier)
+
+    def _planches_js(self) -> dict[str, dict[str, int]]:
+        """Relit la table des planches recopiée à la main dans `particles.js`."""
+        source = (DOCS / "particles.js").read_text(encoding="utf-8")
+        lu = {}
+        for trouve in re.finditer(
+                r'fichier:\s*"([^"]+)"\s*,\s*COLS:\s*(\d+)\s*,'
+                r'\s*CELL_W:\s*(\d+)\s*,\s*CELL_H:\s*(\d+)\s*,\s*COUNT:\s*(\d+)',
+                source):
+            lu[trouve.group(1)] = {
+                "COLS": int(trouve.group(2)), "CELL_W": int(trouve.group(3)),
+                "CELL_H": int(trouve.group(4)), "COUNT": int(trouve.group(5)),
+            }
+        self.assertTrue(lu, "aucune planche déclarée dans particles.js")
+        return lu
+
+    def test_particles_s_accorde_avec_ses_planches(self) -> None:
+        """La géométrie de chaque atlas est recopiée à la main dans le
+        JavaScript depuis la sortie du générateur. Une planche régénérée avec
+        d'autres réglages et un script oublié découperaient les robots en
+        morceaux — et depuis le lot L22 il y en a deux à tenir d'accord."""
+        from PySide6.QtGui import QImage
+
+        from tools import site_deskys
+
+        lu = self._planches_js()
+        attendues = {f: (c, k) for f, c, k in site_deskys.PLANCHES.values()}
+        self.assertEqual(set(lu), set(attendues),
+                         "particles.js et site_deskys ne listent pas les mêmes "
+                         "planches")
+
+        for fichier, cotes in lu.items():
+            count, cols = attendues[fichier]
+            self.assertEqual(cotes["COLS"], cols, fichier)
+            self.assertEqual(cotes["COUNT"], count, fichier)
+
+            planche = QImage(str(DOCS / "assets" / fichier))
+            self.assertFalse(planche.isNull(), "%s illisible" % fichier)
+            lignes = (count + cols - 1) // cols
+            self.assertEqual(planche.width(), cotes["CELL_W"] * cols, fichier)
+            self.assertEqual(planche.height(), cotes["CELL_H"] * lignes, fichier)
+
+    def test_le_champ_montre_les_deux_chassis(self) -> None:
+        """Une seule planche et la vitrine ne montrerait qu'une moitié du
+        produit. La proportion compte aussi : le champ tire uniformément parmi
+        toutes les cases, donc c'est le nombre de variantes de chaque planche
+        qui décide de la part de chaque famille — elle doit valoir celle du
+        tirage du génome, à quelques points près."""
+        from pet.genome.schema import CHASSIS, PARAMS_BY_KEY
+        from tools import site_deskys
+
+        self.assertEqual(set(site_deskys.PLANCHES), set(CHASSIS))
+
+        tirage = PARAMS_BY_KEY["chassis"]
+        poids = dict(zip(tirage.options, tirage.weights))
+        total = sum(c for _, c, _ in site_deskys.PLANCHES.values())
+        for famille, (_, count, _) in site_deskys.PLANCHES.items():
+            part = 100.0 * count / total
+            attendu = 100.0 * poids[famille] / sum(poids.values())
+            self.assertLess(
+                abs(part - attendu), 4.0,
+                "le champ montre %.0f %% de %s pour %.0f %% au tirage"
+                % (part, famille, attendu))
+
+
+class ChassisTest(unittest.TestCase):
+    """La section des deux châssis, en bas de page (lot L22)."""
+
+    def test_les_dessins_viennent_de_l_application(self) -> None:
+        """Le site ne redessine rien : il convertit les planches que le produit
+        embarque déjà. Une illustration faite à côté finirait par promettre un
+        robot que le moteur ne produit plus."""
+        from PySide6.QtGui import QImage
+
+        from pet.genome.schema import CHASSIS
+        from tools import site_chassis
+
+        for famille in CHASSIS:
+            web = DOCS / "assets" / ("blueprint_%s.webp" % famille)
+            appli = RACINE / site_chassis.SOURCE / ("blueprint_%s.png" % famille)
+            self.assertTrue(web.is_file(), web.name)
+            self.assertTrue(appli.is_file(), appli.name)
+            a, b = QImage(str(web)), QImage(str(appli))
+            self.assertEqual((a.width(), a.height()), (b.width(), b.height()),
+                             "%s n'a pas les cotes du dessin de l'application"
+                             % web.name)
+
+    def test_les_deux_pages_portent_la_section(self) -> None:
+        for relatif in site_release.PAGES:
+            source = _lire(relatif)
+            self.assertIn('class="ateliers"', source, relatif)
+            for famille in ("capsule", "monobloc"):
+                self.assertIn("blueprint_%s.webp" % famille, source,
+                              "%s / %s" % (relatif, famille))
+
+    def test_la_fiche_du_site_dit_ce_que_dit_l_application(self) -> None:
+        """Les cotes et les masses sont annoncées à trois endroits : le dessin
+        industriel, la fiche du premier lancement, et maintenant la page. Un
+        plan qui annonce 89 mm à côté d'un site qui en annonce 80 est le genre
+        de détail qui défait une immersion en une seconde.
+
+        Le contrôle porte sur les **nombres**, seuls à traverser la traduction :
+        « aucune » et « none » disent la même chose, 410 g se dit pareil dans
+        les deux langues.
+        """
+        from pet.ui.chassis_choice import FICHES
+
+        # Ce qui doit se retrouver **tel quel** : une année, une cote, une masse,
+        # une référence de calculateur. Le reste de la fiche est de la langue —
+        # « aucune » et « none » disent la même chose — et un test qui
+        # l'exigerait interdirait de traduire la page.
+        chiffre = re.compile(r"^\d+(?: (?:mm|g))?$")
+        verifies = 0
+        for relatif in site_release.PAGES:
+            source = _lire(relatif)
+            for famille, lignes in FICHES.items():
+                for etiquette, valeur in lignes:
+                    if chiffre.match(valeur):
+                        attendu = valeur
+                    elif valeur.startswith("DK-"):
+                        attendu = valeur.split()[0]
+                    else:
+                        continue
+                    verifies += 1
+                    # `assertTrue` et non `assertIn` : l'échec d'un `assertIn`
+                    # recrache la page entière, et on ne lit plus le message.
+                    self.assertTrue(
+                        attendu in source,
+                        "%s : %s de %s annoncé %s dans l'application, absent "
+                        "de la page" % (relatif, etiquette.lower(), famille,
+                                        attendu))
+        # Sans ce compte, une fiche vidée de ses nombres ferait passer la boucle
+        # sans rien vérifier — le genre de test qui rassure et ne tient rien.
+        # Cinq par châssis : l'année, les deux cotes, la masse, le calculateur.
+        self.assertEqual(verifies,
+                         len(site_release.PAGES) * 5 * len(FICHES))
 
     def _constantes(self, script: str, noms) -> dict[str, int]:
         """Relit les constantes recopiées à la main dans un script."""
@@ -109,25 +248,6 @@ class StructureTest(unittest.TestCase):
             self.assertIsNotNone(trouve, "%s absent de %s" % (nom, script))
             lu[nom] = int(trouve.group(1))
         return lu
-
-    def test_particles_s_accorde_avec_sa_planche(self) -> None:
-        """La géométrie de l'atlas est recopiée à la main dans le JavaScript
-        depuis la sortie du générateur. Une planche régénérée avec d'autres
-        réglages et un script oublié découperaient les robots en morceaux."""
-        from PySide6.QtGui import QImage
-
-        from tools import site_deskys
-
-        lu = self._constantes("particles.js",
-                              ("COLS", "CELL_W", "CELL_H", "COUNT"))
-        self.assertEqual(lu["COLS"], site_deskys.COLS)
-        self.assertEqual(lu["COUNT"], site_deskys.COUNT)
-
-        planche = QImage(str(DOCS / "assets" / "deskys.webp"))
-        self.assertFalse(planche.isNull(), "planche illisible")
-        lignes = (lu["COUNT"] + lu["COLS"] - 1) // lu["COLS"]
-        self.assertEqual(planche.width(), lu["CELL_W"] * lu["COLS"])
-        self.assertEqual(planche.height(), lu["CELL_H"] * lignes)
 
     def test_hero_s_accorde_avec_sa_planche(self) -> None:
         """Même piège, même garde-fou : le robot du héros est découpé dans un

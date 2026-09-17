@@ -1,8 +1,15 @@
 /* Le champ de Deskys qui flottent derrière le logo (lot L16).
  *
  * Les particules sont des robots réellement générés par le moteur du produit —
- * voir `tools/site_deskys.py` — et non des dessins faits pour la vitrine. La
- * planche est un atlas : COLS colonnes de cases CELL_W × CELL_H.
+ * voir `tools/site_deskys.py` — et non des dessins faits pour la vitrine.
+ *
+ * **Une planche par châssis**, chacune un atlas de `cols` colonnes en cases
+ * `cw × ch`. Deux familles vivent dans le produit depuis le lot L17, et le champ
+ * doit les montrer toutes les deux. Une particule tire sa case **uniformément
+ * parmi toutes les cases de toutes les planches** : la composition du champ est
+ * donc celle des planches, et elle est réglée pour valoir celle du tirage réel
+ * du génome — 38 % de monoblocs. Pondérer autrement montrerait une famille plus
+ * rare, ou plus commune, qu'elle ne l'est à l'installation.
  *
  * Trois règles portent tout l'effet :
  *
@@ -27,13 +34,15 @@
   // pointerait vers `/en/assets/`, qui n'existe pas.
   var base = (document.currentScript && document.currentScript.src) ||
              (location.origin + location.pathname);
-  var SHEET = new URL("assets/deskys.webp", base).href;
 
-  // À reporter depuis la sortie de `python -m tools.site_deskys`.
-  var COLS = 10;
-  var CELL_W = 139;
-  var CELL_H = 155;
-  var COUNT = 50;
+  // À reporter depuis la sortie de `python -m tools.site_deskys`. Un test du
+  // dépôt confronte ces cotes aux dimensions réelles des fichiers : une planche
+  // régénérée avec d'autres réglages et un script oublié découperaient les
+  // robots en morceaux.
+  var PLANCHES = [
+    { fichier: "deskys.webp",    COLS: 10, CELL_W: 139, CELL_H: 155, COUNT: 50 },
+    { fichier: "monoblocs.webp", COLS: 10, CELL_W: 116, CELL_H: 156, COUNT: 30 }
+  ];
 
   var VIVANTES = 15;          // particules simultanées
   var TAILLE = [34, 82];      // hauteur affichée, en pixels CSS
@@ -49,8 +58,9 @@
   var ctx = canvas.getContext("2d");
   var carte = document.querySelector(".carte");
 
-  var planche = new Image();
-  var prete = false;
+  var pretes = [];            // planches chargées, dans l'ordre d'arrivée
+  var total = 0;              // cases disponibles, toutes planches confondues
+  var attendues = PLANCHES.length;
   var particules = [];
   var largeur = 0, hauteur = 0, dpr = 1;
   var interdit = null;
@@ -112,10 +122,21 @@
     }
     if (!trouve) { return null; }
 
+    // Tirage uniforme sur l'ensemble des cases : c'est le nombre de variantes
+    // de chaque planche qui décide de la part de chaque famille, et non une
+    // pondération écrite ici qu'il faudrait tenir à jour.
+    var rang = Math.floor(Math.random() * total);
+    var planche = pretes[0];
+    for (var k = 0; k < pretes.length; k++) {
+      if (rang < pretes[k].COUNT) { planche = pretes[k]; break; }
+      rang -= pretes[k].COUNT;
+    }
+
     var vie = hasard(VIE[0], VIE[1]);
     var part = (taille - TAILLE[0]) / (TAILLE[1] - TAILLE[0]);
     return {
-      cell: Math.floor(Math.random() * COUNT),
+      planche: planche,
+      cell: rang,
       x: x, y: y,
       taille: taille,
       alpha: ALPHA[0] + (ALPHA[1] - ALPHA[0]) * part,
@@ -138,6 +159,7 @@
   }
 
   function remplir(agee) {
+    if (!total) { return; }
     while (particules.length < VIVANTES) {
       var p = naitre(agee);
       if (!p) { break; }
@@ -156,7 +178,7 @@
 
   function dessiner() {
     ctx.clearRect(0, 0, largeur, hauteur);
-    if (!prete) { return; }
+    if (!total) { return; }
 
     // Les grandes devant : c'est ce qui donne l'étagement.
     var ordre = particules.slice().sort(function (a, b) {
@@ -167,13 +189,17 @@
       var p = ordre[i];
       var a = opacite(p);
       if (a <= 0.004) { continue; }
-      var w = p.taille * (CELL_W / CELL_H);
+      // Chaque planche a ses propres cotes : un monobloc est nettement plus
+      // étroit qu'une capsule coiffée, et leur imposer un même rapport les
+      // écraserait tous les deux d'autant.
+      var pl = p.planche;
+      var w = p.taille * (pl.CELL_W / pl.CELL_H);
       var h = p.taille;
-      var sx = (p.cell % COLS) * CELL_W;
-      var sy = Math.floor(p.cell / COLS) * CELL_H;
+      var sx = (p.cell % pl.COLS) * pl.CELL_W;
+      var sy = Math.floor(p.cell / pl.COLS) * pl.CELL_H;
       var oy = p.y + Math.sin(p.phase) * p.balance;
       ctx.globalAlpha = a;
-      ctx.drawImage(planche, sx, sy, CELL_W, CELL_H,
+      ctx.drawImage(pl.image, sx, sy, pl.CELL_W, pl.CELL_H,
                     p.x - w * 0.5, oy - h * 0.5, w, h);
     }
     ctx.globalAlpha = 1;
@@ -226,16 +252,35 @@
     dessiner();
   }
 
-  planche.onload = function () {
-    prete = true;
+  // Les planches se chargent en parallèle et le champ démarre dès la première :
+  // attendre la dernière laisserait un trou au moment précis où l'on découvre
+  // la page. Celle qui arrive ensuite entre dans le tirage des naissances
+  // suivantes, sans rien interrompre.
+  function chargee(config, image) {
+    config.image = image;
+    pretes.push(config);
+    total += config.COUNT;
     mesurer();
-    if (calme.matches) { poser(); } else { remplir(true); demarrer(); }
-  };
-  planche.onerror = function () {
-    // La planche manque : la page reste parfaitement utilisable, c'est un décor.
-    canvas.style.display = "none";
-  };
-  planche.src = SHEET;
+    if (calme.matches) {
+      poser();
+    } else {
+      remplir(true);
+      demarrer();
+    }
+  }
+
+  function manquante() {
+    // Une planche absente n'emporte pas les autres, et si toutes manquent la
+    // page reste parfaitement utilisable : c'est un décor.
+    if (--attendues <= 0 && !pretes.length) { canvas.style.display = "none"; }
+  }
+
+  PLANCHES.forEach(function (config) {
+    var image = new Image();
+    image.onload = function () { chargee(config, image); };
+    image.onerror = manquante;
+    image.src = new URL("assets/" + config.fichier, base).href;
+  });
 
   var minuteur = null;
   window.addEventListener("resize", function () {

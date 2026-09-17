@@ -1,6 +1,6 @@
-"""Planche des Deskys qui flottent sur le site vitrine (lot L16).
+"""Planches des Deskys qui flottent sur le site vitrine (lot L16).
 
-    python -m tools.site_deskys [nombre] [dossier]
+    python -m tools.site_deskys [chassis] [dossier]
 
 Les particules du site ne sont pas des illustrations : ce sont des robots
 **réellement générés** par le moteur du produit, avec les mêmes génomes, les
@@ -17,6 +17,17 @@ personnalisation propose : on ne montre rien qu'on ne puisse avoir.
 **Toutes les cases ont la même taille**, rognée sur l'union des silhouettes.
 Cadrer chaque robot séparément le ferait sautiller au moment où la particule
 change de variante.
+
+**Une planche par châssis, et le châssis est forcé** (lot L22). Les monoblocs
+sont arrivés après cette planche-ci : les tirer au hasard mêlerait les deux
+familles dans un seul fichier, dont la composition changerait à chaque
+régénération. Deux planches séparées donnent au champ une proportion **choisie**
+— et elle est choisie pour valoir celle du tirage réel, faute de quoi la vitrine
+promettrait une famille plus rare qu'elle ne l'est.
+
+Forcer le châssis rend aussi la planche des capsules reproductible : sans cela,
+la régénérer aujourd'hui y glisserait des monoblocs, puisque le génome les tire
+désormais.
 """
 
 from __future__ import annotations
@@ -38,9 +49,21 @@ from pet.geometry.cosmetics import COSMETICS
 from pet.render.context import RenderContext
 from pet.render.scene import Scene
 
-# Nombre de variantes et disposition de la planche.
-COUNT = 50
-COLS = 10
+# Une planche par châssis : son fichier, son nombre de variantes, sa largeur.
+#
+# Trente monoblocs pour cinquante capsules : une particule est tirée uniformément
+# parmi toutes les cases des deux planches, donc le champ en compte 37,5 %, là
+# où le génome en tire 38 % (`schema.CHASSIS`). La vitrine montre la famille
+# dans la proportion où on la rencontre, ce qui est la seule honnête.
+PLANCHES: dict[str, tuple[str, int, int]] = {
+    #            fichier             variantes  colonnes
+    "capsule":  ("deskys.webp",      50,        10),
+    "monobloc": ("monoblocs.webp",   30,        10),
+}
+
+# Conservées pour la planche d'origine, que le reste du projet nomme ainsi.
+COUNT = PLANCHES["capsule"][1]
+COLS = PLANCHES["capsule"][2]
 
 # Taille de rendu d'une case avant rognage. Généreuse : c'est le rognage qui
 # décide de la taille finale, et un robot élancé coiffé d'un chapeau de fête a
@@ -65,8 +88,9 @@ SEED = 1789
 DEFAULT_DIR = pathlib.Path("docs/assets")
 
 
-def render(count: int = COUNT) -> tuple[QImage, int, int]:
-    """Rend la planche. Retourne l'image et la taille d'une case."""
+def render(count: int = COUNT, chassis: str = "capsule",
+           cols: int = COLS) -> tuple[QImage, int, int]:
+    """Rend la planche d'un châssis. Retourne l'image et la taille d'une case."""
     chapeaux = [c.key for c in COSMETICS if c.slot == "hat"]
     moustaches = [c.key for c in COSMETICS if c.slot == "moustache"]
 
@@ -80,6 +104,9 @@ def render(count: int = COUNT) -> tuple[QImage, int, int]:
         costume = {
             "palette.body": list(BODY_COLORS)[i % len(BODY_COLORS)],
             "palette.accent": list(ACCENT_COLORS)[(i // 2) % len(ACCENT_COLORS)],
+            # Le châssis est **imposé**, pas tiré : c'est ce qui sépare les deux
+            # planches et ce qui les rend reproductibles l'une comme l'autre.
+            "chassis": chassis,
         }
         if rng.random() < HAT_SHARE:
             costume["hat"] = rng.choice(chapeaux)
@@ -105,16 +132,16 @@ def render(count: int = COUNT) -> tuple[QImage, int, int]:
 
     x0, y0, x1, y1 = _union_bbox(frames)
     w, h = x1 - x0, y1 - y0
-    lignes = (count + COLS - 1) // COLS
+    lignes = (count + cols - 1) // cols
 
-    sheet = QImage(w * COLS, h * lignes, QImage.Format.Format_ARGB32_Premultiplied)
+    sheet = QImage(w * cols, h * lignes, QImage.Format.Format_ARGB32_Premultiplied)
     sheet.fill(QColor(0, 0, 0, 0))
     painter = QPainter(sheet)
     for index, frame in enumerate(frames):
         crop = np.ascontiguousarray(frame[y0:y1, x0:x1])
         img = QImage(crop.data, w, h, w * 4,
                      QImage.Format.Format_RGBA8888_Premultiplied)
-        painter.drawImage((index % COLS) * w, (index // COLS) * h, img)
+        painter.drawImage((index % cols) * w, (index // cols) * h, img)
     painter.end()
     return sheet, w, h
 
@@ -138,22 +165,25 @@ def _union_bbox(frames) -> tuple[int, int, int, int]:
 
 
 def main(argv: list[str]) -> int:
-    count = int(argv[1]) if len(argv) > 1 else COUNT
-    sortie = pathlib.Path(argv[2]) if len(argv) > 2 else DEFAULT_DIR
+    demandes = [a for a in argv[1:] if a in PLANCHES] or list(PLANCHES)
+    reste = [a for a in argv[1:] if a not in PLANCHES]
+    sortie = pathlib.Path(reste[0]) if reste else DEFAULT_DIR
     sortie.mkdir(parents=True, exist_ok=True)
 
-    debut = time.perf_counter()
-    sheet, w, h = render(count)
-    chemin = sortie / "deskys.webp"
-    if not sheet.save(str(chemin), "WEBP", 86):
-        print("échec de l'écriture de %s" % chemin)
-        return 1
+    for chassis in demandes:
+        fichier, count, cols = PLANCHES[chassis]
+        debut = time.perf_counter()
+        sheet, w, h = render(count, chassis, cols)
+        chemin = sortie / fichier
+        if not sheet.save(str(chemin), "WEBP", 86):
+            print("échec de l'écriture de %s" % chemin)
+            return 1
 
-    print("%s : %d x %d, case %d x %d, %d variantes, %.0f Ko, %.1f s"
-          % (chemin, sheet.width(), sheet.height(), w, h, count,
-             chemin.stat().st_size / 1024, time.perf_counter() - debut))
-    print("cols=%d  cell=%dx%d  count=%d   <- à reporter dans docs/particles.js"
-          % (COLS, w, h, count))
+        print("%s : %d x %d, case %d x %d, %d variantes, %.0f Ko, %.1f s"
+              % (chemin, sheet.width(), sheet.height(), w, h, count,
+                 chemin.stat().st_size / 1024, time.perf_counter() - debut))
+        print("  cols=%d  cell=%dx%d  count=%d   <- à reporter dans docs/particles.js"
+              % (cols, w, h, count))
     return 0
 
 

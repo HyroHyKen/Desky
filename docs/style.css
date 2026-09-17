@@ -302,6 +302,140 @@ pre {
   margin: 0 0 10px;
 }
 
+/* --- Les deux châssis (lot L22) ------------------------------------------ */
+
+/* Posée entre la scène et le pied de page, à la **même largeur que le pied** :
+ * les deux blocs sont des cartes de bas de page, et les décaler l'un par rapport
+ * à l'autre donnerait deux colonnes de mesure différente sur un même écran. */
+.ateliers {
+  position: relative;
+  z-index: 1;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 0 16px 34px;
+  display: grid;
+  gap: 18px;
+}
+
+.ateliers-entete {
+  text-align: center;
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.ateliers-entete h2 {
+  margin: 0 0 8px;
+  font-size: 1.32rem;
+  letter-spacing: -0.01em;
+}
+
+.ateliers-entete p {
+  margin: 0;
+  color: var(--encre-doux);
+  font-size: 0.95rem;
+}
+
+.ateliers-grille {
+  display: grid;
+  gap: 16px;
+}
+
+/* Même carte que le pied de page : bord de 2 px, ombre portée pleine, gros
+ * rayon. Le site n'a qu'un seul objet, décliné. */
+.chassis {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 2px solid var(--bord);
+  border-radius: var(--rayon-grand);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 5px 0 0 var(--bord);
+}
+
+/* Le dessin est sombre et le reste de la page est clair : il lui faut son
+ * propre cadre, sinon il se lit comme un trou. Le fond repris de la planche
+ * elle-même (`#0d2b36`) évite la bande claire d'un pixel sur les bords
+ * arrondis. */
+.chassis-plan {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 16px;
+  background: #0d2b36;
+  border: 2px solid #0a222b;
+}
+
+.chassis-texte h3 {
+  margin: 0 0 8px;
+  font-size: 1.06rem;
+}
+
+.chassis-texte p {
+  margin: 0 0 14px;
+  color: var(--encre-doux);
+  font-size: 0.93rem;
+}
+
+/* La fiche technique en deux colonnes, étiquette à gauche et valeur à droite,
+ * séparées par un filet : c'est ce qui la fait lire comme une notice d'usine
+ * plutôt que comme un paragraphe de plus. Même parti pris que dans
+ * l'application, où elle apparaît au survol d'un carton. */
+.fiche {
+  margin: 0;
+  display: grid;
+  gap: 0;
+  font-size: 0.82rem;
+}
+
+.fiche > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--bord);
+}
+
+.fiche > div:last-child { border-bottom: 1px solid var(--bord); }
+
+.fiche dt {
+  color: var(--encre-doux);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.fiche dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+  color: var(--encre);
+}
+
+/* Le plan à gauche du texte dès qu'il y a la place. En dessous, il passe
+ * au-dessus — et sa largeur est bornée pour qu'un dessin au format portrait
+ * n'occupe pas un écran de téléphone à lui seul. */
+@media (max-width: 559px) {
+  .chassis-plan {
+    max-width: 240px;
+    margin: 0 auto;
+  }
+}
+
+@media (min-width: 560px) {
+  .chassis {
+    grid-template-columns: 190px 1fr;
+    align-items: start;
+  }
+}
+
+@media (min-width: 900px) {
+  .ateliers-grille { grid-template-columns: 1fr 1fr; }
+  .chassis { grid-template-columns: 1fr; }
+  .chassis-plan { max-width: 220px; margin: 0 auto; }
+}
+
 /* --- Pied de page -------------------------------------------------------- */
 
 footer {

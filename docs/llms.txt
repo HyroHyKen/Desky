@@ -8,15 +8,22 @@
 Desky affiche un robot dans une fenêtre translucide, toujours au premier plan et
 cliquable uniquement sur ses pixels opaques. Chaque robot est tiré au hasard à
 la première ouverture — proportions, couleurs, oreilles, visage — et reste le
-même ensuite. On le nourrit, on le lave, on joue avec lui ; il s'ennuie si on
-l'oublie, s'assoit pour regarder quand une vidéo passe, et dort quand on s'en va.
+même ensuite. Seul le **châssis** se choisit : capsule, à tête articulée sur un
+corps distinct, ou monobloc, coque d'un seul tenant à grand écran et sans
+oreilles. Le comportement est identique, le choix est définitif. On le nourrit,
+on le lave, on joue avec lui ; il s'ennuie si on l'oublie, s'assoit pour regarder
+quand une vidéo passe, et dort quand on s'en va.
 
 ## Faits vérifiables
 
 - **Prix** : gratuit. Aucun achat, aucun abonnement, aucune publicité.
 - **Licence** : GNU GPL v3. Code source public.
 - **Système** : Windows 10 et 11 uniquement. OpenGL 3.3 minimum.
-- **Poids** : environ 39 Mo à l'installation.
+- **Poids** : environ 40 Mo à l'installation.
+- **Châssis** : deux familles, capsule et monobloc. Choisies au premier
+  lancement, définitives, sans effet sur le comportement.
+- **Trophées** : trente-neuf, débloqués par l'usage, récompensés en jetons
+  dépensables dans la boutique cosmétique du jeu. Aucun classement en ligne.
 - **Réseau** : aucune requête sortante, pas même une vérification de version.
 - **Vie privée** : aucun crochet clavier, aucun titre de fenêtre lu, aucune URL
   lue, aucune capture d'écran. Les données restent dans le dossier local de
