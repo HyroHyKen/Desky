@@ -338,8 +338,21 @@ footer {
   border-top: 2px dashed var(--bord);
 }
 
-a { color: var(--accent-sombre); text-decoration-thickness: 1.5px; }
-a:hover { color: var(--accent); }
+/* Habillage des liens **de texte seulement**.
+ *
+ * `:where()` annule la spécificité de la règle, et ce n'est pas un raffinement :
+ * sans lui, `a:hover` vaut 0‑1‑1 et l'emporte sur `.telecharger`, qui ne vaut
+ * que 0‑1‑0. Le libellé du bouton passait alors en cyan sur un fond cyan au
+ * survol — illisible, et exactement au moment où on le regarde. Le
+ * `:not([class])` dit la même chose autrement : un lien qui porte une classe est
+ * un composant, il habille ses propres états.
+ */
+a:where(:not([class])) {
+  color: var(--accent-sombre);
+  text-decoration-thickness: 1.5px;
+}
+
+a:where(:not([class])):hover { color: var(--accent); }
 
 @media (min-width: 760px) {
   .pied-colonnes {
