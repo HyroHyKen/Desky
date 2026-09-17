@@ -59,7 +59,17 @@ class StructureTest(unittest.TestCase):
         de liens ci-dessus."""
         self.assertTrue((DOCS / "assets" / "deskys.webp").is_file())
 
-    def test_le_script_et_la_planche_s_accordent(self) -> None:
+    def _constantes(self, script: str, noms) -> dict[str, int]:
+        """Relit les constantes recopiées à la main dans un script."""
+        source = (DOCS / script).read_text(encoding="utf-8")
+        lu = {}
+        for nom in noms:
+            trouve = re.search(r"\b%s = (\d+)" % nom, source)
+            self.assertIsNotNone(trouve, "%s absent de %s" % (nom, script))
+            lu[nom] = int(trouve.group(1))
+        return lu
+
+    def test_particles_s_accorde_avec_sa_planche(self) -> None:
         """La géométrie de l'atlas est recopiée à la main dans le JavaScript
         depuis la sortie du générateur. Une planche régénérée avec d'autres
         réglages et un script oublié découperaient les robots en morceaux."""
@@ -67,10 +77,8 @@ class StructureTest(unittest.TestCase):
 
         from tools import site_deskys
 
-        source = (DOCS / "particles.js").read_text(encoding="utf-8")
-        lu = {cle: int(re.search(r"var %s = (\d+);" % cle, source).group(1))
-              for cle in ("COLS", "CELL_W", "CELL_H", "COUNT")}
-
+        lu = self._constantes("particles.js",
+                              ("COLS", "CELL_W", "CELL_H", "COUNT"))
         self.assertEqual(lu["COLS"], site_deskys.COLS)
         self.assertEqual(lu["COUNT"], site_deskys.COUNT)
 
@@ -79,6 +87,40 @@ class StructureTest(unittest.TestCase):
         lignes = (lu["COUNT"] + lu["COLS"] - 1) // lu["COLS"]
         self.assertEqual(planche.width(), lu["CELL_W"] * lu["COLS"])
         self.assertEqual(planche.height(), lu["CELL_H"] * lignes)
+
+    def test_hero_s_accorde_avec_sa_planche(self) -> None:
+        """Même piège, même garde-fou : le robot du héros est découpé dans un
+        atlas dont les cotes vivent en double, dans le générateur et dans le
+        script. La planche empile les yeux ouverts puis fermés, d'où le
+        facteur deux en hauteur."""
+        from PySide6.QtGui import QImage
+
+        from tools import site_hero
+
+        lu = self._constantes("hero.js", ("COLS", "ROWS", "CELL_W", "CELL_H"))
+        self.assertEqual(lu["COLS"], site_hero.COLS)
+        self.assertEqual(lu["ROWS"], site_hero.ROWS)
+
+        planche = QImage(str(DOCS / "assets" / "hero.webp"))
+        self.assertFalse(planche.isNull(), "planche illisible")
+        self.assertEqual(planche.width(), lu["CELL_W"] * lu["COLS"])
+        self.assertEqual(planche.height(), lu["CELL_H"] * lu["ROWS"] * 2)
+
+    def test_le_hero_reprend_la_demarche_du_produit(self) -> None:
+        """Les constantes de saut sont recopiées de `pet/anim/locomotion.py`.
+        Les régler d'un côté seulement donnerait un robot qui ne marche pas
+        comme celui qu'on télécharge — et c'est précisément ce que la page
+        promet."""
+        from pet.anim import locomotion
+
+        source = (DOCS / "hero.js").read_text(encoding="utf-8")
+        for nom in ("HOP_DISTANCE", "HOP_HEIGHT", "HOP_CROUCH", "HOP_SQUASH",
+                    "CROUCH_TIME", "AIR_TIME", "LAND_TIME"):
+            trouve = re.search(r"\b%s = ([0-9.]+)" % nom, source)
+            self.assertIsNotNone(trouve, "%s absent de hero.js" % nom)
+            self.assertAlmostEqual(float(trouve.group(1)),
+                                   getattr(locomotion, nom), places=4,
+                                   msg="%s a divergé de la locomotion" % nom)
 
     def test_les_deux_langues_se_pointent_l_une_l_autre(self) -> None:
         self.assertIn('href="en/"', _lire("docs/index.html"))

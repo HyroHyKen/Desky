@@ -108,7 +108,7 @@ body::after {
   min-height: 86svh;
   display: grid;
   place-items: center;
-  padding: 44px 16px 28px;
+  padding: 44px 16px 210px;
   overflow: hidden;
 }
 
@@ -127,6 +127,24 @@ body::after {
                       #000 26%, rgba(0, 0, 0, 0.55) 52%, transparent 76%);
   mask-image: radial-gradient(ellipse at center,
               #000 26%, rgba(0, 0, 0, 0.55) 52%, transparent 76%);
+}
+
+/* Le sol du robot : une bande en bas de la scène, dont la hauteur est
+ * **réservée par le rembourrage de `.scene`**. Sans cette réservation le
+ * contenu, centré, descendrait dans la bande et le robot passerait devant le
+ * bouton de téléchargement — ou derrière, ce qui est pire. */
+#heros {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  /* `width: 100%` et non `right: 0` : `.scene` est une grille centrée, et le
+   * `justify-items: center` qu'elle impose à ses enfants fait rétrécir un
+   * absolu dont les deux décalages sont posés. Mesuré à 400 px au lieu de la
+   * largeur de la page avant correction. */
+  width: 100%;
+  height: 200px;
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* Halo de lisibilité sous le contenu : sans lui, une particule qui passe
