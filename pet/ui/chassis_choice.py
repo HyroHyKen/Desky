@@ -38,13 +38,13 @@ log = logging.getLogger("desky.ui")
 
 # --- Fenêtre ---------------------------------------------------------------
 
-WIDTH, HEIGHT = 820, 764
+WIDTH, HEIGHT = 880, 856
 PAD = 26
 RADIUS = 22
 
-CARD_W, CARD_H = 300, 392
-CARD_GAP = 40
-CARD_TOP = 104
+CARD_W, CARD_H = 324, 404
+CARD_GAP = 44
+CARD_TOP = 96
 
 # --- Palette, celle du panneau de soin --------------------------------------
 
@@ -72,24 +72,50 @@ LIBELLES = {"capsule": "Capsule", "monobloc": "Monobloc"}
 
 DESCRIPTIONS = {
     "capsule": (
-        "Le châssis d'origine, produit sans interruption depuis la première "
-        "série. Une tête articulée sur un corps distinct : il hoche, il penche, "
-        "il se retourne pour vous suivre du regard. Antennes, disques ou "
-        "ailerons — toutes les oreilles du catalogue sortent de cette ligne."
+        "Le châssis d'origine, assemblé sans interruption depuis la première "
+        "série. Tête articulée sur un corps distinct : il hoche, il penche, il "
+        "se retourne pour suivre le curseur. Antennes, disques ou ailerons, "
+        "toutes les oreilles du catalogue sortent de cette ligne. Chez Desky "
+        "Inc. on l'appelle « celui qui a une nuque »."
     ),
     "monobloc": (
         "Coque d'un seul tenant, née d'un atelier qui voulait supprimer la "
-        "jointure du cou — la pièce qui revenait le plus souvent au service "
+        "jointure du cou, la pièce qui revenait le plus souvent au service "
         "après-vente. Ni oreilles ni articulation : un grand écran, et le bloc "
-        "entier s'oriente. Desky Inc. le résume ainsi : moins de pièces, moins "
-        "d'ennuis."
+        "entier s'oriente. La note interne disait « moins de pièces, moins "
+        "d'ennuis ». Elle est restée sur l'affiche de l'atelier."
     ),
 }
 
+# Fiche technique, une ligne par caractéristique. Tout y est inventé **sauf les
+# cotes**, qui sont celles du dessin industriel du lot L20 : un plan qui annonce
+# 94 mm à côté d'une fiche qui en annonce 80 est le genre de détail qui défait
+# une immersion en une seconde. Un test compare les deux.
+FICHES = {
+    "capsule": (
+        ("MISE EN SERVICE", "2017"),
+        ("HAUTEUR", "87 mm"),
+        ("LARGEUR", "50 mm"),
+        ("MASSE À VIDE", "340 g"),
+        ("ARTICULATIONS", "3 (cou, tête, buste)"),
+        ("CALCULATEUR", "DK-4 « Colibri »"),
+    ),
+    "monobloc": (
+        ("MISE EN SERVICE", "2023"),
+        ("HAUTEUR", "89 mm"),
+        ("LARGEUR", "47 mm"),
+        ("MASSE À VIDE", "410 g"),
+        ("ARTICULATIONS", "aucune"),
+        ("CALCULATEUR", "DK-7 « Bourdon »"),
+    ),
+}
+
+FICHE_TITRE = "FICHE TECHNIQUE"
+
 TITRE = "Choisissez son châssis"
 SOUS_TITRE = "DESKY INC.  ·  ATELIER D'ASSEMBLAGE"
-MENTION = "Tout le reste — proportions, couleurs, visage — est tiré au sort."
-INVITE = "Survolez un châssis pour savoir ce qu'il est."
+MENTION = "Proportions, couleurs et visage : tout le reste est tiré au sort."
+INVITE = "Survolez un châssis pour lire sa fiche."
 
 CONFIRM_TITRE = "C'est définitif"
 CONFIRM_CORPS = ("Votre robot naîtra sur un châssis %s. Ce choix fait partie de "
@@ -99,6 +125,14 @@ CONFIRM_OUI = "C'est celui-là"
 CONFIRM_NON = "Revenir"
 
 # --- Défilement des exemples ------------------------------------------------
+
+# Amplitudes du mouvement. Réglées à l'œil, et volontairement franches : un
+# rebond qu'on devine n'est pas un rebond, c'est une imprécision.
+ENTREE_ECHELLE = 0.84       # échelle de départ d'une carte qui arrive
+ENTREE_MONTEE = 34.0        # pixels parcourus pendant l'entrée
+SURVOL_ECHELLE = 0.045      # agrandissement au survol
+SURVOL_MONTEE = 10.0        # levée au survol
+APPUI_ECHELLE = 0.07        # écrasement d'un bouton enfoncé
 
 VIGNETTE_H = 96
 VIGNETTE_GAP = 12
@@ -137,9 +171,14 @@ class ChassisChooser(QWidget):
         self._fini = False
         self._defile = 0.0
 
-        self._entree = Stagger(delai=0.09, duree=0.42)
-        self._ressorts = SpringBank(omega=19.0, zeta=0.72)
-        self._voile = SpringBank(omega=16.0, zeta=0.9)
+        # Trois bancs, trois raideurs. Le survol est le plus vif et le plus
+        # sous-amorti : c'est lui qu'on voit répondre au geste. Le voile ne
+        # dépasse pas — un fond qui rebondit se lit comme un défaut d'affichage.
+        self._entree = Stagger(delai=0.10, duree=0.46)
+        self._ressorts = SpringBank(omega=17.0, zeta=0.55)
+        self._voile = SpringBank(omega=15.0, zeta=1.0)
+        self._modale = SpringBank(omega=15.0, zeta=0.58)
+        self._appui = SpringBank(omega=30.0, zeta=0.62)
         self._ticker = Ticker(self.step, self.update, self)
 
     # -- ressources ----------------------------------------------------------
@@ -168,9 +207,16 @@ class ChassisChooser(QWidget):
         self._ticker.wake()
 
     def step(self, dt: float) -> bool:
+        # L'appui est **relâché à chaque image** : le bouton s'écrase au clic et
+        # remonte ensuite tout seul, sans qu'on ait à guetter le relâchement de
+        # la souris. C'est ce que fait déjà le panneau de soin.
+        for cle in ("oui", "non"):
+            self._appui.target(cle, 0.0)
         bouge = self._entree.step(dt)
         bouge = self._ressorts.step(dt) or bouge
         bouge = self._voile.step(dt) or bouge
+        bouge = self._modale.step(dt) or bouge
+        bouge = self._appui.step(dt) or bouge
         # Le défilement des exemples ne s'arrête jamais tant qu'un carton est
         # survolé : il est donc **exclu** du prédicat d'immobilité, sinon le
         # ticker tournerait pour lui seul alors qu'il n'y a rien à voir ailleurs.
@@ -237,10 +283,13 @@ class ChassisChooser(QWidget):
         if self._confirme:
             oui, non = self._boutons_confirmation()
             if oui.contains(x, y):
+                self._appui.target("oui", 1.0)
                 self._terminer(self._confirme)
             elif non.contains(x, y) or not self._boite_confirmation().contains(x, y):
+                self._appui.target("non", 1.0 if non.contains(x, y) else 0.0)
                 self._confirme = ""
                 self._voile.target("voile", 0.0)
+                self._modale.target("modale", 0.0)
                 self._ticker.wake()
             return
 
@@ -249,6 +298,7 @@ class ChassisChooser(QWidget):
             self._confirme = famille
             self._survol = ""
             self._voile.target("voile", 1.0)
+            self._modale.target("modale", 1.0)
             for autre in self.familles:
                 self._ressorts.target(autre, 0.0)
             self._ticker.wake()
@@ -258,6 +308,7 @@ class ChassisChooser(QWidget):
             if self._confirme:
                 self._confirme = ""
                 self._voile.target("voile", 0.0)
+                self._modale.target("modale", 0.0)
                 self._ticker.wake()
             else:
                 self._terminer("")
@@ -314,15 +365,42 @@ class ChassisChooser(QWidget):
 
     def _peindre_carton(self, painter: QPainter, index: int,
                         famille: str) -> None:
+        """Entrée et survol passent tous deux par l'**échelle**.
+
+        Une carte qui ne fait que glisser arrive sans poids : c'est le
+        dépassement d'échelle qui lui en donne, exactement comme au lot L9. La
+        courbe de `Stagger` rend des valeurs au-dessus de 1 au milieu du
+        mouvement, et c'est ce dépassement qu'on cherche ici — l'opacité, elle,
+        est bornée, parce qu'une opacité qui dépasse ne se voit pas et masque le
+        rebond au lieu de l'accompagner.
+        """
         part = self._entree.value(famille)
         if part <= 0.001:
             return
         leve = self._ressorts.value(famille)
-        rect = self._card_rect(index).translated(0.0, -7.0 * leve
-                                                 + 22.0 * (1.0 - part))
-        painter.setOpacity(part)
+        rect = self._card_rect(index)
 
-        painter.setPen(ACCENT if leve > 0.5 else CARD_EDGE)
+        echelle = (ENTREE_ECHELLE + (1.0 - ENTREE_ECHELLE) * part
+                   + SURVOL_ECHELLE * leve)
+        monte = ENTREE_MONTEE * (1.0 - part) - SURVOL_MONTEE * leve
+
+        painter.save()
+        painter.setOpacity(max(0.0, min(1.0, part)))
+        centre = rect.center()
+        painter.translate(centre.x(), centre.y() + monte)
+        painter.scale(echelle, echelle)
+        painter.translate(-centre.x(), -centre.y())
+
+        # L'ombre portée grandit avec la levée : c'est elle qui dit que la carte
+        # a décollé, plus encore que son déplacement.
+        if leve > 0.01:
+            ombre = QColor(20, 60, 72, int(38 * min(1.0, leve)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(ombre)
+            painter.drawRoundedRect(rect.translated(0.0, 10.0 * leve + 6.0),
+                                    RADIUS + 2, RADIUS + 2)
+
+        painter.setPen(ACCENT if leve > 0.45 else CARD_EDGE)
         painter.setBrush(CARD_BG)
         painter.drawRoundedRect(rect, RADIUS, RADIUS)
 
@@ -339,17 +417,17 @@ class ChassisChooser(QWidget):
             painter.drawPixmap(int(zone.left()), int(zone.top()), plan)
             painter.restore()
 
-        painter.setFont(self._police(CARD_TITLE_SIZE, gras=True, espacement=1.4))
+        painter.setFont(self._police(CARD_TITLE_SIZE, gras=True, espacement=1.6))
         painter.setPen(INK)
         painter.drawText(QRectF(rect.left(), rect.bottom() - 52,
                                 rect.width(), 34),
                          int(Qt.AlignmentFlag.AlignCenter),
                          LIBELLES.get(famille, famille).upper())
-        painter.setOpacity(1.0)
+        painter.restore()
 
     def _boite_infobulle(self) -> QRectF:
         haut = CARD_TOP + CARD_H + 18
-        return QRectF(PAD, haut, WIDTH - 2 * PAD, HEIGHT - haut - 54)
+        return QRectF(PAD, haut, WIDTH - 2 * PAD, HEIGHT - haut - 56)
 
     def _peindre_infobulle(self, painter: QPainter) -> None:
         """La boîte est **toujours là**, pleine ou vide.
@@ -359,28 +437,71 @@ class ChassisChooser(QWidget):
         l'impression qu'on a cliqué par erreur.
         """
         boite = self._boite_infobulle()
-        painter.setOpacity(self._entree.value("mention"))
+        painter.setOpacity(max(0.0, min(1.0, self._entree.value("mention"))))
         painter.setPen(CARD_EDGE)
-        painter.setBrush(QColor(255, 255, 255, 235))
+        painter.setBrush(QColor(255, 255, 255, 238))
         painter.drawRoundedRect(boite, 16, 16)
 
         famille = self._survol
         if not famille or self._confirme:
             painter.setFont(self._police(BODY_SIZE))
-            painter.setPen(QColor(150, 160, 170))
+            painter.setPen(QColor(152, 162, 172))
             painter.drawText(boite, int(Qt.AlignmentFlag.AlignCenter), INVITE)
             painter.setOpacity(1.0)
             return
 
-        texte = QRectF(boite.left() + 20, boite.top() + 14,
-                       boite.width() - 40, 72)
+        # Le contenu entre en décalé par rapport à la boîte : c'est ce qui fait
+        # qu'on lit un panneau qui se remplit, et non un panneau qui change.
+        arrivee = max(0.0, min(1.0, self._ressorts.value(famille)))
+        painter.setOpacity(arrivee)
+        haut = boite.top() + 16
+        colonne = (boite.width() - 3 * 20) * 0.58
+
+        texte = QRectF(boite.left() + 20, haut, colonne, 132)
         painter.setFont(self._police(BODY_SIZE))
         painter.setPen(INK_SOFT)
         painter.drawText(texte,
                          int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignTop),
                          DESCRIPTIONS.get(famille, ""))
+
+        self._peindre_fiche(painter, famille,
+                            QRectF(texte.right() + 20, haut,
+                                   boite.right() - texte.right() - 40, 132))
         painter.setOpacity(1.0)
         self._peindre_defilement(painter, famille, boite)
+
+    def _peindre_fiche(self, painter: QPainter, famille: str,
+                       zone: QRectF) -> None:
+        """La fiche technique, en colonne d'étiquettes et de valeurs.
+
+        Alignée en deux colonnes plutôt qu'en phrases : c'est ce qui la fait
+        lire comme une notice d'usine et non comme un paragraphe de plus.
+        """
+        lignes = FICHES.get(famille, ())
+        if not lignes:
+            return
+
+        painter.setFont(self._police(BODY_SIZE - 2, gras=True, espacement=1.4))
+        painter.setPen(ACCENT)
+        painter.drawText(QRectF(zone.left(), zone.top(), zone.width(), 16),
+                         int(Qt.AlignmentFlag.AlignLeft), FICHE_TITRE)
+
+        y = zone.top() + 22.0
+        pas = 19.0
+        largeur_cle = zone.width() * 0.52
+        for cle, valeur in lignes:
+            painter.setFont(self._police(BODY_SIZE - 2, espacement=0.6))
+            painter.setPen(QColor(150, 160, 170))
+            painter.drawText(QRectF(zone.left(), y, largeur_cle, pas),
+                             int(Qt.AlignmentFlag.AlignLeft
+                                 | Qt.AlignmentFlag.AlignVCenter), cle)
+            painter.setFont(self._police(BODY_SIZE - 1, gras=True))
+            painter.setPen(INK)
+            painter.drawText(QRectF(zone.left() + largeur_cle, y,
+                                    zone.width() - largeur_cle, pas),
+                             int(Qt.AlignmentFlag.AlignLeft
+                                 | Qt.AlignmentFlag.AlignVCenter), valeur)
+            y += pas
 
     def _peindre_defilement(self, painter: QPainter, famille: str,
                             boite: QRectF) -> None:
@@ -425,11 +546,23 @@ class ChassisChooser(QWidget):
         painter.setClipPath(chemin)
         painter.fillRect(QRectF(0, 0, WIDTH, HEIGHT), voile)
         painter.setClipping(False)
-        if part <= 0.02:
+
+        pop = self._modale.value("modale")
+        if pop <= 0.02:
             return
 
-        boite = self._boite_confirmation().translated(0.0, 18.0 * (1.0 - part))
-        painter.setOpacity(part)
+        boite = self._boite_confirmation()
+        painter.save()
+        painter.setOpacity(max(0.0, min(1.0, pop)))
+        # Le ressort de la modale est sous-amorti : `pop` passe au-dessus de 1
+        # puis revient, et c'est ce dépassement qui la fait « claquer » à
+        # l'arrivée au lieu de se déplier mollement.
+        centre = boite.center()
+        echelle = 0.88 + 0.12 * pop
+        painter.translate(centre.x(), centre.y())
+        painter.scale(echelle, echelle)
+        painter.translate(-centre.x(), -centre.y())
+
         painter.setPen(CARD_EDGE)
         painter.setBrush(CARD_BG)
         painter.drawRoundedRect(boite, 18, 18)
@@ -450,12 +583,21 @@ class ChassisChooser(QWidget):
                              | Qt.AlignmentFlag.AlignHCenter), corps)
 
         oui, non = self._boutons_confirmation()
-        for rect, libelle, plein in ((non, CONFIRM_NON, False),
-                                     (oui, CONFIRM_OUI, True)):
+        for rect, libelle, plein, cle in ((non, CONFIRM_NON, False, "non"),
+                                          (oui, CONFIRM_OUI, True, "oui")):
+            enfonce = self._appui.value(cle)
+            painter.save()
+            milieu = rect.center()
+            facteur = 1.0 - APPUI_ECHELLE * max(0.0, min(1.0, enfonce))
+            painter.translate(milieu.x(), milieu.y())
+            painter.scale(facteur, facteur)
+            painter.translate(-milieu.x(), -milieu.y())
             painter.setPen(Qt.PenStyle.NoPen if plein else CARD_EDGE)
             painter.setBrush(ACCENT if plein else QColor(0, 0, 0, 0))
-            painter.drawRoundedRect(rect, rect.height() / 2.0, rect.height() / 2.0)
+            painter.drawRoundedRect(rect, rect.height() / 2.0,
+                                    rect.height() / 2.0)
             painter.setFont(self._police(BODY_SIZE + 2, gras=plein))
             painter.setPen(QColor(255, 255, 255) if plein else INK)
             painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), libelle)
-        painter.setOpacity(1.0)
+            painter.restore()
+        painter.restore()

@@ -241,3 +241,53 @@ class ApplicationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FicheTest(unittest.TestCase):
+    """La fiche technique et le dessin industriel doivent dire la même chose."""
+
+    def test_chaque_chassis_a_sa_fiche(self) -> None:
+        for chassis in CHASSIS:
+            lignes = chassis_choice.FICHES.get(chassis, ())
+            self.assertGreaterEqual(len(lignes), 5, chassis)
+            for cle, valeur in lignes:
+                self.assertTrue(cle.strip(), chassis)
+                self.assertTrue(str(valeur).strip(), "%s / %s" % (chassis, cle))
+
+    def test_les_cotes_de_la_fiche_sont_celles_du_plan(self) -> None:
+        """Un plan qui annonce 94 mm à côté d'une fiche qui en annonce 80 défait
+        l'immersion en une seconde. Les deux viennent donc du même calcul, et
+        c'est vérifié ici plutôt que laissé à la vigilance.
+        """
+        from pet.genome.generator import generate
+        from pet.geometry import proportions
+        from tools import make_chassis_art as art
+
+        for chassis in CHASSIS:
+            genome = generate(art.VEDETTES[chassis])
+            genome["chassis"] = chassis
+            if chassis == "monobloc":
+                genome["ear.type"] = "none"
+            dims = proportions.dimensions(genome)
+            attendu = {
+                "HAUTEUR": int(round(dims.total_height * art.MM_PAR_UNITE)),
+                "LARGEUR": int(round(2.0 * max(dims.head_a, dims.body_a)
+                                     * art.MM_PAR_UNITE)),
+            }
+            fiche = dict(chassis_choice.FICHES[chassis])
+            for cle, valeur in attendu.items():
+                self.assertEqual(fiche[cle], "%d mm" % valeur,
+                                 "%s / %s" % (chassis, cle))
+
+    def test_aucun_tiret_cadratin_dans_les_textes(self) -> None:
+        """Demandé au lot L21 : le tiret cadratin coupe la lecture d'un écran
+        qu'on découvre, et la ponctuation courante suffit."""
+        textes = [chassis_choice.TITRE, chassis_choice.SOUS_TITRE,
+                  chassis_choice.MENTION, chassis_choice.INVITE,
+                  chassis_choice.CONFIRM_TITRE, chassis_choice.CONFIRM_CORPS,
+                  chassis_choice.CONFIRM_OUI, chassis_choice.CONFIRM_NON]
+        textes += list(chassis_choice.DESCRIPTIONS.values())
+        textes += [c for lignes in chassis_choice.FICHES.values()
+                   for paire in lignes for c in paire]
+        for texte in textes:
+            self.assertNotIn("—", texte, texte[:50])

@@ -404,7 +404,7 @@ class GamesMixin:
                             self._balloon_rect())
         bus.emit("partie_finie", jeu="rally", score=score, record=record)
         log.info("partie finie : %d échanges%s", score,
-                 " — record" if record else "")
+                 " · record" if record else "")
         self._close_balloon()
         if self.animator is not None:
             self.animator.play("celebrate" if record else "poke_reaction")

@@ -117,7 +117,7 @@ class Feedback:
         seul, aucune clé n'est réservée.
         """
         if nom not in EVENTS:
-            raise KeyError("fait inconnu : %r — ajoutez-le à EVENTS" % nom)
+            raise KeyError("fait inconnu : %r ; ajoutez-le à EVENTS" % nom)
         for fonction in tuple(self._abonnes.get(nom, ())):
             try:
                 fonction(**charge)

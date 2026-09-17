@@ -141,7 +141,7 @@ def generate(seed: int) -> dict[str, Any]:
         log.debug("tirage %d rejeté : %s", attempt + 1, ",".join(issues))
 
     raise GenomeGenerationError(
-        f"aucun génome viable en {MAX_ATTEMPTS} tirages pour la graine {seed} — "
+        f"aucun génome viable en {MAX_ATTEMPTS} tirages pour la graine {seed} : "
         "les bornes du schéma et les règles de viabilité sont incompatibles"
     )
 

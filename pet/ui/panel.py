@@ -293,13 +293,13 @@ TOOLTIPS: dict[str, str] = {
     "clean": "Le nettoyer",
     # Réglages
     "autostart": "Lancer au démarrage de Windows",
-    "reset": "Tout réinitialiser — maintenir appuyé",
+    "reset": "Tout réinitialiser : maintenir appuyé",
 }
 
 # Infobulles des choix d'apparence, construites à la volée : une par couleur et
 # une par chapeau serait une table à tenir à jour à chaque ajout.
 TOOLTIP_SWATCH = "Couleur : %s"
-TOOLTIP_HAT_BUY = "%s — %d jetons"
+TOOLTIP_HAT_BUY = "%s · %d jetons"
 TOOLTIP_HAT_WEAR = "Porter : %s"
 TOOLTIP_HAT_WORN = "Porté : %s"
 TOOLTIP_NO_HAT = "Ne rien porter"
@@ -328,8 +328,8 @@ CONSUMABLE_LABELS: dict[str, str] = {
     "kit": "Kit de bain",
     "battery": "Pile",
 }
-TOOLTIP_BUY = "%s — %d jetons"
-TOOLTIP_USE = "%s — il en reste %d"
+TOOLTIP_BUY = "%s · %d jetons"
+TOOLTIP_USE = "%s · il en reste %d"
 
 # Hauteur de la bande de titre, et sa police.
 TITLE_H = 32
