@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Desky — a small robot that lives on your desktop</title>
+<meta name="description" content="Desky is a desktop companion for Windows. It reacts to what you do, you look after it, you play with it. No connection, no data leaving your machine.">
+<link rel="canonical" href="https://hyrohyken.github.io/Desky/en/">
+<link rel="alternate" hreflang="fr" href="https://hyrohyken.github.io/Desky/">
+<link rel="alternate" hreflang="en" href="https://hyrohyken.github.io/Desky/en/">
+<link rel="icon" href="../assets/logo.png" type="image/png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Desky — a small robot that lives on your desktop">
+<meta property="og:description" content="A desktop companion for Windows. No connection, no data leaving your machine.">
+<meta property="og:image" content="https://hyrohyken.github.io/Desky/assets/logo.png">
+<meta property="og:locale" content="en_GB">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<main class="scene">
+  <canvas id="champ" aria-hidden="true"></canvas>
+
+  <div class="carte">
+    <img class="logo" src="../assets/logo.png" alt="Desky" width="1000" height="380">
+
+    <p class="pitch apparait" style="--retard: 160ms">
+      A small robot that lives on your desktop. It notices what you are doing,
+      sulks when you forget it, and lets you feed it, wash it and lose to it at
+      keepie‑uppie. Every robot is unique&nbsp;— yours is drawn the first time
+      you open it.
+    </p>
+
+    <div class="apparait" style="--retard: 280ms">
+    <!-- telechargement:debut — block regenerated on every release by
+         tools/site_release.py. Do not edit by hand: publishing rewrites
+         everything between the two markers. -->
+    <a class="telecharger" href="https://github.com/HyroHyKen/Desky/releases/download/v0.13.0/Desky-0.13.0-setup.exe">
+      <span class="telecharger-titre">Download for Windows</span>
+      <span class="telecharger-meta">Version 0.13.0 · 39 MB · Windows 10 and 11</span>
+    </a>
+    <!-- telechargement:fin -->
+    </div>
+
+    <details class="avertissement apparait" style="--retard: 400ms">
+      <summary>Windows will show a warning when you install it</summary>
+      <div class="avertissement-corps">
+        <p>
+          The installer is not signed with a commercial certificate — those cost
+          several hundred euros a year, and Desky is free. So Windows shows
+          “Windows protected your PC” for any program it does not recognise yet.
+        </p>
+        <ol>
+          <li>Click <strong>More info</strong>.</li>
+          <li>Then <strong>Run anyway</strong>.</li>
+        </ol>
+        <p>
+          Every release ships with its SHA‑256 checksum and a
+          <a href="https://www.sigstore.dev/" rel="noopener">Sigstore</a>
+          provenance attestation. Together they guarantee the file really comes
+          from the public repository, built from the commit it names — and you
+          can check it yourself in two commands&nbsp;:
+        </p>
+        <pre><code>Get-FileHash .\Desky-0.13.0-setup.exe -Algorithm SHA256
+gh attestation verify .\Desky-0.13.0-setup.exe --repo HyroHyKen/Desky</code></pre>
+        <p>
+          The expected checksum is in <code>SHA256SUMS.txt</code>, next to the
+          installer on the
+          <a href="https://github.com/HyroHyKen/Desky/releases/latest" rel="noopener">release
+          page</a>.
+        </p>
+      </div>
+    </details>
+  </div>
+</main>
+
+<footer>
+  <div class="pied apparait" style="--retard: 540ms">
+    <div class="pied-colonnes">
+
+      <section>
+        <h2>The software</h2>
+        <p>
+          Desky is free software, released under the
+          <a href="https://www.gnu.org/licenses/gpl-3.0.html" rel="noopener">GNU
+          GPL&nbsp;v3</a>.
+        </p>
+        <p>
+          <a href="https://github.com/HyroHyKen/Desky" rel="noopener">Source code</a> ·
+          <a href="https://github.com/HyroHyKen/Desky/releases" rel="noopener">All releases</a> ·
+          <a href="https://github.com/HyroHyKen/Desky/issues" rel="noopener">Report a problem</a>
+        </p>
+      </section>
+
+      <section>
+        <h2>Third‑party components</h2>
+        <ul class="pastilles">
+          <li>PySide6 — LGPL v3</li>
+          <li>ModernGL — MIT</li>
+          <li>NumPy — BSD‑3</li>
+          <li>psutil — BSD‑3</li>
+          <li>pycaw — MIT</li>
+          <li>comtypes — MIT</li>
+        </ul>
+        <p>
+          The Qt libraries are installed as separate files and can be replaced,
+          as the LGPL requires.
+        </p>
+      </section>
+
+      <section>
+        <h2>Legal</h2>
+        <p>Publisher&nbsp;: HyroHyKen. Contact through the repository issues.</p>
+        <p>
+          Host&nbsp;: GitHub&nbsp;Inc., 88 Colin P. Kelly Jr. Street,
+          San Francisco, CA 94107, USA.
+        </p>
+        <p>
+          This site uses no cookies, no analytics and no remote fonts. The
+          application makes <strong>no network connection at all</strong>,
+          installs no keyboard hook, and reads neither your window titles nor
+          your URLs. Nothing leaves your machine.
+        </p>
+      </section>
+
+    </div>
+
+    <p class="pied-liens">
+      <a href="../">Français</a>
+      <span>·</span>
+      <span>Made with far too much care for a 4&nbsp;cm robot.</span>
+    </p>
+  </div>
+</footer>
+
+<script src="../particles.js"></script>
+</body>
+</html>

@@ -1,0 +1,362 @@
+/* Site vitrine de Desky (lot L16).
+ *
+ * La palette part de celle du panneau de soin — l'accent cyan #1FA8BA est
+ * exactement `panel.ACCENT`, l'encre `panel.INK` — et s'autorise autour d'elle
+ * un fond dégradé et un grain que l'application n'a pas : une page web éclairée
+ * à plat a l'air d'un brouillon, là où une fenêtre posée sur un vrai bureau
+ * emprunte sa texture à ce qu'il y a derrière.
+ *
+ * **Thème clair seulement.** Pas de variante sombre : le produit est un objet
+ * clair, le logo est fourni pour fond clair, et une page qui bascule au gré des
+ * réglages du visiteur double la surface à vérifier pour un écran unique.
+ *
+ * Aucune police distante, aucune feuille tierce, aucune requête sortante : une
+ * page qui vend un logiciel sans sortie réseau ne peut pas appeler trois
+ * domaines pour s'afficher.
+ */
+
+:root {
+  color-scheme: light;
+
+  --encre: #141a21;
+  --encre-doux: #5c6873;
+  --accent: #1fa8ba;
+  --accent-sombre: #15818f;
+  --accent-pale: #d9f0f3;
+  --creme: #fdf6ec;
+  --carte: #ffffff;
+  --bord: #e3e9ec;
+  --bord-fort: #cfd9de;
+  --ombre: rgba(20, 40, 50, 0.16);
+
+  --rayon: 20px;
+  --rayon-grand: 28px;
+
+  /* Le rebond du produit (§10) : une seule courbe, réutilisée partout, pour que
+   * tout ce qui bouge sur la page appartienne à la même main. */
+  --ressort: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  min-height: 100svh;
+  color: var(--encre);
+  font-family: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
+               "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+
+  /* Deux halos, un froid en haut et un chaud en bas à droite, sur un dégradé
+   * vertical très pâle. Fixés : le fond ne défile pas avec le pied de page,
+   * sinon on voit la couture. */
+  background:
+    radial-gradient(1200px 660px at 50% 8%,  #dcf1f5 0%, rgba(220, 241, 245, 0) 62%),
+    radial-gradient(980px 540px at 84% 82%,  #fdeedd 0%, rgba(253, 238, 221, 0) 58%),
+    radial-gradient(760px 520px at 12% 68%,  #eaf3ec 0%, rgba(234, 243, 236, 0) 60%),
+    linear-gradient(180deg, #fcfefe 0%, #f2f7f8 100%);
+  background-attachment: fixed;
+}
+
+/* Grain. Un bruit fractal en SVG, embarqué en data-URI : pas une requête de
+ * plus, et il se répète sans couture. C'est ce qui empêche les grands aplats
+ * dégradés de faire « page de garde vide ». */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0.38;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  mix-blend-mode: multiply;
+}
+
+/* --- Entrées ------------------------------------------------------------- */
+
+/* Tout arrive l'un après l'autre, et rien n'arrive à sa taille finale : c'est
+ * la leçon du lot L9. Le décalage est porté par `--retard`, posé dans le HTML,
+ * pour qu'on lise l'ordre d'apparition dans l'ordre du document. */
+@keyframes surgit {
+  from { opacity: 0; transform: translateY(20px) scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes surgit-logo {
+  from { opacity: 0; transform: translateY(26px) scale(0.78); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes flotte {
+  from { transform: translateY(-4px); }
+  to   { transform: translateY(4px); }
+}
+
+.apparait {
+  animation: surgit 640ms var(--ressort) both;
+  animation-delay: var(--retard, 0ms);
+}
+
+/* --- La scène centrale --------------------------------------------------- */
+
+.scene {
+  position: relative;
+  min-height: 86svh;
+  display: grid;
+  place-items: center;
+  padding: 44px 16px 28px;
+  overflow: hidden;
+}
+
+/* Le champ de particules. Une **ellipse** et non un disque : un cercle assez
+ * large pour laisser respirer la carte déborderait de la fenêtre en hauteur, et
+ * on n'en verrait plus qu'une bande — le halo cesserait de se lire comme centré.
+ * `pointer-events: none` est indispensable : le canvas couvre le bouton. */
+#champ {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(98vw, 1180px);
+  height: min(82svh, 760px);
+  pointer-events: none;
+  -webkit-mask-image: radial-gradient(ellipse at center,
+                      #000 26%, rgba(0, 0, 0, 0.55) 52%, transparent 76%);
+  mask-image: radial-gradient(ellipse at center,
+              #000 26%, rgba(0, 0, 0, 0.55) 52%, transparent 76%);
+}
+
+/* Halo de lisibilité sous le contenu : sans lui, une particule qui passe
+ * derrière la phrase d'accroche la fait vibrer. */
+.carte {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 27rem;
+  padding: 24px 22px 20px;
+  background: radial-gradient(ellipse 78% 62% at 50% 46%,
+              rgba(252, 254, 254, 0.96) 0%,
+              rgba(252, 254, 254, 0.86) 46%,
+              rgba(252, 254, 254, 0) 78%);
+}
+
+.logo {
+  display: block;
+  width: min(300px, 70vw);
+  height: auto;
+  margin: 0 auto 14px;
+  animation: surgit-logo 760ms var(--ressort) both,
+             flotte 4.2s ease-in-out 900ms infinite alternate;
+}
+
+.pitch {
+  margin: 0 auto 26px;
+  max-width: 25rem;
+  color: var(--encre-doux);
+  font-size: 1.04rem;
+}
+
+/* --- Le bouton ----------------------------------------------------------- */
+
+/* Un bouton-jouet : une semelle pleine et non floue sous la pastille, qui
+ * s'écrase quand on appuie. C'est le geste des interfaces de console — on
+ * *enfonce* quelque chose — et il ne coûte qu'une ombre sans flou. */
+.telecharger {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 15px 36px 16px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2bc0d3 0%, var(--accent) 100%);
+  color: #fff;
+  text-decoration: none;
+  box-shadow: 0 6px 0 0 var(--accent-sombre),
+              0 14px 24px -10px var(--ombre);
+  transition: transform 260ms var(--ressort),
+              box-shadow 260ms var(--ressort),
+              filter 160ms ease;
+}
+
+.telecharger:hover,
+.telecharger:focus-visible {
+  transform: translateY(-3px);
+  filter: saturate(1.06);
+  box-shadow: 0 9px 0 0 var(--accent-sombre),
+              0 20px 30px -12px var(--ombre);
+}
+
+.telecharger:active {
+  transform: translateY(5px);
+  box-shadow: 0 1px 0 0 var(--accent-sombre),
+              0 6px 12px -8px var(--ombre);
+  transition-duration: 90ms;
+}
+
+.telecharger-titre {
+  font-size: 1.14rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.telecharger-meta {
+  font-size: 0.8rem;
+  opacity: 0.9;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- L'avertissement Windows --------------------------------------------- */
+
+/* Discret par défaut, complet une fois déplié. C'est l'endroit où la majorité
+ * des installations échouent : quelqu'un qui voit l'écran bleu sans y avoir été
+ * préparé referme tout. Le dire avant vaut mieux que le découvrir. */
+.avertissement {
+  margin: 20px auto 0;
+  max-width: 29rem;
+  text-align: left;
+  font-size: 0.9rem;
+  color: var(--encre-doux);
+}
+
+.avertissement > summary {
+  cursor: pointer;
+  text-align: center;
+  list-style: none;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.88rem;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.avertissement > summary::-webkit-details-marker { display: none; }
+.avertissement > summary::after { content: " ▾"; opacity: 0.55; }
+.avertissement[open] > summary::after { content: " ▴"; }
+
+.avertissement > summary:hover {
+  color: var(--accent-sombre);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+/* Panneau-autocollant : bord franc et semelle nette, comme les vignettes de la
+ * boutique du jeu. */
+.avertissement-corps {
+  margin-top: 10px;
+  padding: 16px 18px;
+  border: 2px solid var(--bord-fort);
+  border-radius: var(--rayon);
+  background: var(--carte);
+  box-shadow: 0 4px 0 0 var(--bord);
+  animation: surgit 420ms var(--ressort) both;
+}
+
+.avertissement-corps p { margin: 0 0 10px; }
+.avertissement-corps p:last-child { margin-bottom: 0; }
+.avertissement-corps ol { margin: 0 0 10px; padding-left: 1.3em; }
+
+code, pre {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+}
+
+pre {
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--accent-pale);
+  color: #123c43;
+  margin: 0 0 10px;
+}
+
+/* --- Pied de page -------------------------------------------------------- */
+
+footer {
+  position: relative;
+  z-index: 1;
+  padding: 8px 16px 48px;
+  font-size: 0.86rem;
+  color: var(--encre-doux);
+}
+
+/* Une carte posée, pas une bande collée au bas de page : le pied appartient au
+ * même univers d'objets arrondis que le reste. */
+.pied {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 26px 26px 20px;
+  border: 2px solid var(--bord);
+  border-radius: var(--rayon-grand);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 5px 0 0 var(--bord);
+  display: grid;
+  gap: 18px;
+}
+
+.pied h2 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--encre);
+  margin: 0 0 8px;
+}
+
+.pied section { margin: 0; }
+.pied p { margin: 0 0 6px; }
+.pied p:last-child { margin-bottom: 0; }
+
+/* Les composants tiers en pastilles : une liste à puces dans un pied de page a
+ * l'air d'un fichier de licences, des pastilles ont l'air d'un générique. */
+.pastilles {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pastilles li {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-pale);
+  color: #175a63;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.pied-liens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  padding-top: 14px;
+  border-top: 2px dashed var(--bord);
+}
+
+a { color: var(--accent-sombre); text-decoration-thickness: 1.5px; }
+a:hover { color: var(--accent); }
+
+@media (min-width: 760px) {
+  .pied-colonnes {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 26px;
+  }
+}
+
+/* Le mouvement est une préférence, pas un dû : quinze robots qui flottent sont
+ * exactement ce qui gêne quelqu'un qui a demandé moins d'animation. Ici on coupe
+ * les entrées et le flottement ; `particles.js` fige le champ de son côté. */
+@media (prefers-reduced-motion: reduce) {
+  .apparait, .logo, .avertissement-corps {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  * { transition-duration: 0.01ms !important; }
+}

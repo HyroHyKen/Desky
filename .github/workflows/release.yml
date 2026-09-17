@@ -246,3 +246,67 @@ jobs:
             "dist/${{ steps.version.outputs.setup }}" \
             "dist/SHA256SUMS.txt" \
             "dist/${{ steps.version.outputs.setup }}.sigstore.json"
+
+  # Le site est statique et n'interroge aucune API : son bouton pointe vers un
+  # fichier de version **précise**, donc vérifiable. Le prix de ce choix est
+  # qu'il faut le réécrire à chaque publication — c'est tout ce que fait ce job.
+  #
+  # Séparé du job de construction, et conditionné à sa réussite : on ne met pas
+  # à jour la page de téléchargement d'une release qui n'existe pas.
+  site:
+    name: Mise à jour du lien de téléchargement
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write     # pousser le commit de mise à jour sur `main`
+
+    steps:
+      # `main` et non le tag : on écrit dans la branche, pas dans l'instantané
+      # figé qu'est le tag. Sans cela le commit partirait dans le vide.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Le poids affiché vient du fichier réellement publié, et non d'une
+      # constante : annoncer une taille approximative pour un binaire de 40 Mo
+      # ferait douter du téléchargement.
+      - name: Récupération de l'installateur publié
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "Desky-*-setup.exe" --dir dist
+          ls -l dist
+
+      - name: Réécriture du bouton
+        run: |
+          set -euo pipefail
+          setup="$(ls dist/Desky-*-setup.exe | head -1)"
+          python -m tools.site_release "${GITHUB_REF_NAME#v}" "$setup"
+
+      # `git diff --quiet` plutôt qu'un commit inconditionnel : republier la même
+      # version ne doit pas déposer un commit vide (cf. le test d'idempotence).
+      - name: Publication de la mise à jour
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- docs; then
+            echo "Le site est déjà à jour, rien à pousser."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "Site : lien de téléchargement ${GITHUB_REF_NAME}"
+          # `main` a pu avancer pendant les quarante minutes de construction.
+          # Sans ce rebase, la publication réussit et la mise à jour du site
+          # échoue toute seule, ce qui laisse le bouton sur la version d'avant.
+          git pull --rebase origin main
+          git push origin main

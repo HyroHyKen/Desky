@@ -17,9 +17,15 @@
 
 name: CI
 
+# La publication d'une release réécrit le bouton de téléchargement du site et
+# repousse sur `main` (cf. `release.yml`). Rejouer toute la suite pour un
+# changement qui ne touche qu'une page statique brûlerait un run à chaque
+# version. Les invariants du site, eux, sont couverts par `tests/test_site.py`,
+# qui tourne dès qu'autre chose bouge.
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
