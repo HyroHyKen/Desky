@@ -335,6 +335,11 @@ TOOLTIP_USE = "%s — il en reste %d"
 TITLE_H = 32
 TITLE_SIZE = 18
 
+# Taille de la référence d'usine, sous le nom (lot L18). Nettement plus petite
+# que le nom : c'est une mention, pas un titre — le robot s'appelle Bip, il est
+# de modèle C3-A7.
+MODEL_SIZE = 11
+
 # Filet d'accent sous le titre. Il fait deux choses qu'un titre seul ne fait
 # pas : il ancre le texte à une largeur — donc la page a une tête, pas une
 # ligne flottante — et il donne à la cascade quelque chose à **dessiner** en
@@ -419,6 +424,8 @@ class Layout:
     bars: list[tuple[str, float]] = field(default_factory=list)
     mood: str = ""
     name: str = ""
+    # Référence d'usine, sous le nom. Vide partout ailleurs qu'au statut.
+    model: str = ""
     big_icon: str = ""
     tokens: int = -1            # solde affiché, -1 pour ne rien montrer
     title: str = ""
@@ -917,7 +924,10 @@ class CarePanel(QWidget):
             hauteur = (PAD + HEADER + BAR_GAP
                        + len(NEEDS) * (BAR_HEIGHT + BAR_GAP)
                        + BUTTON + PAD)
-            layout = Layout(height=hauteur, mood=brain.expression, name=nom)
+            from ..genome.model import libelle_famille, model_name
+            layout = Layout(height=hauteur, mood=brain.expression, name=nom,
+                            model="%s · %s" % (libelle_famille(self.genome),
+                                               model_name(self.genome)))
             layout.bars = [(n, getattr(brain.needs, n)) for n in NEEDS]
             layout.buttons = self._row(("back",),
                                        hauteur - PAD - BUTTON)
@@ -1158,11 +1168,31 @@ class CarePanel(QWidget):
             font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.6)
             painter.setFont(font)
             painter.setPen(INK)
-            painter.drawText(
-                QRectF(PAD + HEADER + GAP, PAD,
-                       WIDTH - 2 * PAD - HEADER - GAP, HEADER),
-                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-                layout.name)
+
+            gauche = PAD + HEADER + GAP
+            largeur = WIDTH - 2 * PAD - HEADER - GAP
+            if layout.model:
+                # Deux lignes dans la même bande : le nom se cale en haut, la
+                # référence dessous. Centrer le nom alors qu'une seconde ligne
+                # le suit le ferait flotter au-dessus d'elle.
+                painter.drawText(
+                    QRectF(gauche, PAD, largeur, HEADER * 0.58),
+                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom),
+                    layout.name)
+                reference = QFont()
+                reference.setPixelSize(MODEL_SIZE)
+                reference.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.8)
+                painter.setFont(reference)
+                painter.setPen(INK_SOFT)
+                painter.drawText(
+                    QRectF(gauche, PAD + HEADER * 0.56, largeur, HEADER * 0.44),
+                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
+                    layout.model)
+            else:
+                painter.drawText(
+                    QRectF(gauche, PAD, largeur, HEADER),
+                    int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                    layout.name)
 
     def _paint_bar(self, painter: QPainter, need: str, value: float,
                    y: int, entree: float = 1.0) -> None:

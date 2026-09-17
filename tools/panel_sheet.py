@@ -20,7 +20,12 @@ FOND = "#C9CDD1"
 
 
 class _FauxSession:
-    """Session minimale : le panneau ne lit que `brain`, `name` et `appearance`."""
+    """Session minimale : juste ce que le panneau lit d'elle.
+
+    La liste a grossi avec les lots — les jeux du L12 ont ajouté `best_score`,
+    les consommables du L13 `consumables` et `count`. Cette classe était restée
+    à l'état du L7 et l'outil ne démarrait plus.
+    """
 
     def __init__(self, brain, name: str) -> None:
         self.brain = brain
@@ -29,6 +34,19 @@ class _FauxSession:
         self.inventory = []
         self.tokens = 0
         self.tokens_remaining = 25
+        self.consumables = {"meal": 2, "kit": 1}
+
+    def count(self, cle: str) -> int:
+        return self.consumables.get(cle, 0)
+
+    def best_score(self, jeu: str) -> int:
+        return {"rally": 14, "cups": 6}.get(jeu, 0)
+
+    def owns(self, cle: str) -> bool:
+        return cle in self.inventory
+
+    def worn(self, slot: str) -> str:
+        return ""
 
 
 def main(argv: list[str] | None = None) -> int:
